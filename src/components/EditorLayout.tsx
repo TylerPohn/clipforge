@@ -1,17 +1,21 @@
-import { AppBar, Toolbar, Button, Box, Typography } from '@mui/material';
-import {
-  VideoFile,
-  FiberManualRecord,
-  FileDownload
-} from '@mui/icons-material';
+import { AppBar, Toolbar, Button, Box, Typography, Chip } from '@mui/material';
+import { FiberManualRecord, FileDownload } from '@mui/icons-material';
+import ImportButton from './ImportButton';
+import DropZone from './DropZone';
+import VideoPlayer from './VideoPlayer';
+import { useVideoStore } from '../store/videoStore';
+import { useVideoMetadata } from '../hooks/useVideoMetadata';
+import { useKeyboardShortcuts } from '../hooks/useKeyboardShortcuts';
 
 function EditorLayout() {
+  // Load metadata when video is imported
+  useVideoMetadata();
+  useKeyboardShortcuts();
+
+  const { videoName, videoDuration, videoResolution } = useVideoStore();
+
   return (
-    <Box sx={{
-      display: 'flex',
-      flexDirection: 'column',
-      height: '100%'
-    }}>
+    <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
       {/* Top Navigation Bar */}
       <AppBar position="static" elevation={0}>
         <Toolbar>
@@ -19,45 +23,37 @@ function EditorLayout() {
             ClipForge
           </Typography>
 
-          <Button
-            color="inherit"
-            startIcon={<VideoFile />}
-            sx={{ mr: 2 }}
-          >
-            Import
-          </Button>
+          <ImportButton />
 
-          <Button
-            color="inherit"
-            startIcon={<FiberManualRecord />}
-            sx={{ mr: 2 }}
-          >
+          <Button color="inherit" startIcon={<FiberManualRecord />} sx={{ mr: 2 }}>
             Record
           </Button>
 
-          <Button
-            color="inherit"
-            startIcon={<FileDownload />}
-          >
+          <Button color="inherit" startIcon={<FileDownload />}>
             Export
           </Button>
         </Toolbar>
       </AppBar>
 
-      {/* Main Content Area */}
-      <Box sx={{
-        flex: 1,
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        backgroundColor: 'background.default',
-      }}>
-        <Typography variant="h5" color="text.secondary">
-          Import a video to get started
-        </Typography>
-      </Box>
+      {/* Video info chips */}
+      {videoName && (
+        <Box sx={{ p: 2, display: 'flex', gap: 1 }}>
+          <Chip label={videoName} color="primary" />
+          {videoDuration && (
+            <Chip label={`${videoDuration.toFixed(1)}s`} />
+          )}
+          {videoResolution && (
+            <Chip label={`${videoResolution.width}x${videoResolution.height}`} />
+          )}
+        </Box>
+      )}
 
-      {/* Timeline Footer (Placeholder) */}
+      {/* Main Content Area with Drop Zone */}
+      <DropZone>
+        <VideoPlayer />
+      </DropZone>
+
+      {/* Timeline Footer */}
       <Box sx={{
         height: 120,
         backgroundColor: 'background.paper',

@@ -10,5 +10,9 @@
   <body>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
+    <script type="module">
+      import { invoke } from '@tauri-apps/api/core';
+      window.__TAURI_INVOKE__ = invoke;
+    </script>
   </body>
 </html>

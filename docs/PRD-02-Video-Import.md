@@ -31,7 +31,7 @@ Allow users to import video files (MP4, MOV) into ClipForge using either drag-an
 **File to create:** `src/store/videoStore.ts`
 
 **What to do:**
-1. Install Zustand for state management:
+1. DONE Install Zustand for state management:
    ```bash
    npm install zustand
    ```

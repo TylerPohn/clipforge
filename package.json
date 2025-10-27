@@ -7,17 +7,20 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "tauri:build": "tauri build",
+    "kill": "pkill -f 'tauri|clipforge' || true"
   },
   "dependencies": {
     "@emotion/react": "^11.14.0",
     "@emotion/styled": "^11.14.1",
     "@mui/icons-material": "^7.3.4",
     "@mui/material": "^7.3.4",
-    "@tauri-apps/api": "^2",
+    "@tauri-apps/api": "^2.9.0",
     "@tauri-apps/plugin-opener": "^2",
     "react": "^18.3.1",
-    "react-dom": "^18.3.1"
+    "react-dom": "^18.3.1",
+    "zustand": "^5.0.8"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2",
