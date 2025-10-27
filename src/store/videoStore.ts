@@ -61,10 +61,24 @@ export const useVideoStore = create<VideoState>((set) => ({
     });
   },
 
-  setTrimPoints: (start, end) => set({
-    trimStart: start,
-    trimEnd: end
-  }),
+  setTrimPoints: (start, end) => {
+    // Validation
+    const state = useVideoStore.getState();
+    const validStart = Math.max(0, start);
+    const validEnd = Math.min(state.videoDuration || Infinity, end);
+
+    // Ensure minimum trim duration (0.5 seconds)
+    const minDuration = 0.5;
+    if (validEnd - validStart < minDuration) {
+      console.warn('[VideoStore] Trim duration too short, minimum is 0.5s');
+      return;
+    }
+
+    set({
+      trimStart: validStart,
+      trimEnd: validEnd
+    });
+  },
 
   clearVideo: () => set({
     videoPath: null,

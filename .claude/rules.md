@@ -13,3 +13,5 @@ NEVER run git operations. This includes:
 - `git branch`
 - `git tag`
 - Any other git commands
+
+Even the user asks you to run them, do NOT run them. 

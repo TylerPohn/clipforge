@@ -20,6 +20,7 @@ function VideoPlayer() {
     currentTime,
     volume,
     videoDuration,
+    trimStart,
     trimEnd,
     setPlaying,
     setCurrentTime,
@@ -150,6 +151,11 @@ function VideoPlayer() {
       video.pause();
       setPlaying(false);
       video.currentTime = trimEnd;
+    }
+
+    // Skip to trim start if playing before it
+    if (trimStart && video.currentTime < trimStart && isPlaying) {
+      video.currentTime = trimStart;
     }
   };
 

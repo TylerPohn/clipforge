@@ -6,8 +6,11 @@ export function useKeyboardShortcuts() {
     isPlaying,
     currentTime,
     videoDuration,
+    trimStart,
+    trimEnd,
     setPlaying,
-    setCurrentTime
+    setCurrentTime,
+    setTrimPoints
   } = useVideoStore();
 
   useEffect(() => {
@@ -52,10 +55,56 @@ export function useKeyboardShortcuts() {
           // Go forward 1 frame
           setCurrentTime(Math.min(videoDuration || 0, currentTime + 0.033));
           break;
+
+        // TRIM SHORTCUTS
+        case 'KeyI':
+          // Set trim start (In point) to current time
+          e.preventDefault();
+          if (videoDuration) {
+            setTrimPoints(currentTime, Math.max(currentTime + 1, trimEnd));
+          }
+          break;
+
+        case 'KeyO':
+          // Set trim end (Out point) to current time
+          e.preventDefault();
+          if (videoDuration) {
+            setTrimPoints(Math.min(trimStart, currentTime - 1), currentTime);
+          }
+          break;
+
+        case 'KeyR':
+          // Reset trim to full video
+          e.preventDefault();
+          if (videoDuration) {
+            setTrimPoints(0, videoDuration);
+          }
+          break;
+
+        case 'Home':
+          // Jump to trim start
+          e.preventDefault();
+          setCurrentTime(trimStart);
+          break;
+
+        case 'End':
+          // Jump to trim end
+          e.preventDefault();
+          setCurrentTime(trimEnd);
+          break;
       }
     };
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isPlaying, currentTime, videoDuration, setPlaying, setCurrentTime]);
+  }, [
+    isPlaying,
+    currentTime,
+    videoDuration,
+    trimStart,
+    trimEnd,
+    setPlaying,
+    setCurrentTime,
+    setTrimPoints
+  ]);
 }

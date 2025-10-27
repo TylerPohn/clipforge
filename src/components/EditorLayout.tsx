@@ -3,6 +3,7 @@ import { FiberManualRecord, FileDownload } from '@mui/icons-material';
 import ImportButton from './ImportButton';
 import DropZone from './DropZone';
 import VideoPlayer from './VideoPlayer';
+import TimelineRuler from './TimelineRuler';
 import { useVideoStore } from '../store/videoStore';
 import { useVideoMetadata } from '../hooks/useVideoMetadata';
 import { useKeyboardShortcuts } from '../hooks/useKeyboardShortcuts';
@@ -54,16 +55,7 @@ function EditorLayout() {
       </DropZone>
 
       {/* Timeline Footer */}
-      <Box sx={{
-        height: 120,
-        backgroundColor: 'background.paper',
-        borderTop: '1px solid rgba(255, 255, 255, 0.12)',
-        p: 2,
-      }}>
-        <Typography variant="body2" color="text.secondary">
-          Timeline will appear here
-        </Typography>
-      </Box>
+      <TimelineRuler />
     </Box>
   );
 }
