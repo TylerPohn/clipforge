@@ -26,58 +26,48 @@ Implement a video player that displays the imported video with standard playback
 
 ## Implementation Steps
 
-### Step 1: Convert File Path for HTML Video Element (45 minutes)
+### Step 1: Create Tauri Command to Load Video Files (45 minutes)
 
 **Background:**
-HTML `<video>` elements can't directly access file system paths for security reasons. Tauri provides a way to convert file paths to URLs that the browser can access.
+HTML `<video>` elements can't directly access file system paths for security reasons. We create a Tauri command that reads the video file and returns it as bytes, which we then convert to a Blob URL in the browser.
 
-**File to edit:** `src-tauri/src/main.rs`
+**File to edit:** `src-tauri/src/lib.rs`
 
 **What to do:**
-1. Add this import at the top:
-```rust
-use tauri::api::path::resolve_path;
-use tauri::Env;
-```
-
-2. Add this command:
+1. Add this command to read video files:
 
 ```rust
 #[tauri::command]
-fn convert_file_path_to_url(
-    app_handle: tauri::AppHandle,
-    file_path: String
-) -> Result<String, String> {
-    use std::path::PathBuf;
-
-    // Convert to absolute path
-    let path = PathBuf::from(&file_path);
-
-    // Tauri's convertFileSrc equivalent
-    let url = format!("asset://localhost/{}",
-        path.to_string_lossy()
-            .replace("\\", "/")
-            .trim_start_matches("/"));
-
-    Ok(url)
+fn get_video_file(video_path: &str) -> Result<Vec<u8>, String> {
+    use std::fs;
+    fs::read(video_path)
+        .map_err(|e| format!("Failed to read video file: {}", e))
 }
 ```
 
-3. Register it:
+2. Register it in the builder:
 ```rust
-fn main() {
+#[cfg_attr(mobile, tauri::mobile_entry_point)]
+pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
+            greet,
             open_file_dialog,
             get_video_metadata,
-            convert_file_path_to_url  // Add this
+            get_video_file  // Add this
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
 ```
 
-**Note:** We'll actually use Tauri's built-in `convertFileSrc` from the frontend, but this shows how it works.
+**Why this approach:**
+- Reads the entire video file from disk and sends bytes to frontend
+- Frontend converts bytes to Blob, then creates blob:// URL
+- Blob URLs bypass security restrictions and work with HTML5 video elements
+- Works reliably across all platforms and video codecs
 
 ---
 
@@ -181,7 +171,7 @@ export const useVideoStore = create<VideoState>((set) => ({
 1. Create `src/components/VideoPlayer.tsx`:
 
 ```typescript
-import { useRef, useEffect } from 'react';
+import { useRef, useEffect, useState } from 'react';
 import { Box, IconButton, Slider, Typography, Stack } from '@mui/material';
 import {
   PlayArrow,
@@ -189,11 +179,13 @@ import {
   VolumeUp,
   VolumeOff
 } from '@mui/icons-material';
-import { convertFileSrc } from '@tauri-apps/api/tauri';
 import { useVideoStore } from '../store/videoStore';
+
+declare const window: any;
 
 function VideoPlayer() {
   const videoRef = useRef<HTMLVideoElement>(null);
+  const [videoSrc, setVideoSrc] = useState<string | null>(null);
 
   const {
     videoPath,
@@ -208,8 +200,37 @@ function VideoPlayer() {
     setVolume
   } = useVideoStore();
 
-  // Convert file path to URL that video element can use
-  const videoSrc = videoPath ? convertFileSrc(videoPath) : null;
+  // Fetch video file and create blob URL
+  useEffect(() => {
+    if (!videoPath) {
+      setVideoSrc(null);
+      return;
+    }
+
+    const loadVideo = async () => {
+      try {
+        if (!window.__TAURI_INVOKE__) {
+          console.error('Tauri invoke not available');
+          return;
+        }
+
+        const invoke = window.__TAURI_INVOKE__;
+        const videoBytes = (await invoke('get_video_file', {
+          videoPath: videoPath
+        })) as number[];
+
+        const uint8Array = new Uint8Array(videoBytes);
+        const blob = new Blob([uint8Array], { type: 'video/mp4' });
+        const blobUrl = URL.createObjectURL(blob);
+
+        setVideoSrc(blobUrl);
+      } catch (e) {
+        console.error('Failed to load video file:', e);
+      }
+    };
+
+    loadVideo();
+  }, [videoPath]);
 
   // Sync video element with store
   useEffect(() => {
@@ -590,15 +611,15 @@ export default EditorLayout;
 **File to edit:** `src-tauri/tauri.conf.json`
 
 **What to do:**
-1. Add asset protocol scope to allow video file access:
+1. Add asset protocol scope to allow wide file access:
 
 ```json
 {
-  "tauri": {
-    "allowlist": {
-      "protocol": {
-        "asset": true,
-        "assetScope": ["**"]
+  "app": {
+    "security": {
+      "csp": null,
+      "assetProtocol": {
+        "scope": ["**"]
       }
     }
   }
@@ -606,8 +627,11 @@ export default EditorLayout;
 ```
 
 **What this does:**
-- Enables the `asset://` protocol for accessing local files
-- `assetScope: ["**"]` allows access to any file (needed for user-selected videos)
+- Configures Tauri's asset protocol with a broad scope
+- `"**"` allows access to any file on the system
+- This is needed because users can import videos from anywhere on their system
+
+**Note:** In production apps, you may want to restrict this to specific directories like `["$HOME/Downloads/**", "$HOME/Videos/**"]`
 
 ---
 
