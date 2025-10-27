@@ -190,7 +190,8 @@ function VideoPlayer() {
       display: 'flex',
       flexDirection: 'column',
       backgroundColor: '#000',
-      position: 'relative'
+      position: 'relative',
+      minHeight: 0 // Important for flex children to shrink properly
     }}>
       {/* Video Element */}
       <Box sx={{
@@ -198,7 +199,9 @@ function VideoPlayer() {
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
-        position: 'relative'
+        position: 'relative',
+        minHeight: 0,
+        overflow: 'hidden'
       }}>
         <video
           ref={videoRef}
@@ -232,6 +235,8 @@ function VideoPlayer() {
             });
           }}
           style={{
+            width: '100%',
+            height: '100%',
             maxWidth: '100%',
             maxHeight: '100%',
             objectFit: 'contain'
