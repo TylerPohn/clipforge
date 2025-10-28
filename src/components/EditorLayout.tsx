@@ -1,6 +1,7 @@
 import { AppBar, Toolbar, Button, Box, Typography, Chip } from '@mui/material';
-import { FiberManualRecord, FileDownload } from '@mui/icons-material';
+import { FiberManualRecord } from '@mui/icons-material';
 import ImportButton from './ImportButton';
+import ExportButton from './ExportButton';
 import DropZone from './DropZone';
 import VideoPlayer from './VideoPlayer';
 import TimelineRuler from './TimelineRuler';
@@ -30,9 +31,7 @@ function EditorLayout() {
             Record
           </Button>
 
-          <Button color="inherit" startIcon={<FileDownload />}>
-            Export
-          </Button>
+          <ExportButton />
         </Toolbar>
       </AppBar>
 

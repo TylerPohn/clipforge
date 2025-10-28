@@ -608,6 +608,49 @@ Export complete: /path/to/output.mp4
 - Verify `shell.open` is in allowlist
 - Check Tauri permissions in `tauri.conf.json`
 
+### Issue: App freezes after clicking Export button ⚠️ **CRITICAL FIX APPLIED**
+**Problem**: Application freezes when the save file dialog appears, requiring force quit.
+
+**Root Cause**:
+- The `save_file_dialog` command was using `blocking_save_file()` in a synchronous function
+- This blocked the main UI thread, preventing the app from responding
+- The `trim_video` command was also using blocking `child.wait()` which could freeze during video processing
+
+**Solution Applied** (✅ Fixed in src-tauri/src/lib.rs):
+1. Made `save_file_dialog` async and wrapped `blocking_save_file()` in `tokio::task::spawn_blocking`
+   - This runs the blocking dialog operation on a background thread
+   - Keeps the main UI thread responsive
+
+2. Wrapped `child.wait()` in `tokio::task::spawn_blocking` in the `trim_video` command
+   - Prevents FFmpeg wait operation from blocking the async runtime
+   - Allows UI to remain responsive during video processing
+
+**Code Changes**:
+```rust
+// Before (BLOCKING - causes freeze)
+#[tauri::command]
+fn save_file_dialog(default_filename: String, app: tauri::AppHandle) -> Result<String, String> {
+    let file_path = app.dialog().file().blocking_save_file(); // BLOCKS MAIN THREAD!
+    // ...
+}
+
+// After (NON-BLOCKING - fixed)
+#[tauri::command]
+async fn save_file_dialog(default_filename: String, app: tauri::AppHandle) -> Result<String, String> {
+    let file_path = tokio::task::spawn_blocking(move || {
+        app.dialog().file().blocking_save_file()
+    })
+    .await
+    .map_err(|e| format!("Task join error: {}", e))?;
+    // ...
+}
+```
+
+**Key Takeaway**:
+- ⚠️ NEVER use blocking operations in Tauri commands without wrapping them in `spawn_blocking`
+- All file dialogs, file I/O, and process waits should be async or wrapped in `spawn_blocking`
+- Tauri commands should be marked `async` when they perform any blocking operations
+
 ---
 
 ## Optional Enhancements (Post-MVP)

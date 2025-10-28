@@ -1,0 +1,241 @@
+import { useState, useEffect } from 'react';
+import {
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
+  Button,
+  LinearProgress,
+  Typography,
+  Box,
+  Alert
+} from '@mui/material';
+import { CheckCircle, Error as ErrorIcon } from '@mui/icons-material';
+
+declare const window: any;
+
+interface ExportDialogProps {
+  open: boolean;
+  onClose: () => void;
+  inputPath: string;
+  trimStart: number;
+  trimEnd: number;
+  videoName: string;
+}
+
+function ExportDialog({
+  open,
+  onClose,
+  inputPath,
+  trimStart,
+  trimEnd,
+  videoName
+}: ExportDialogProps) {
+  const [status, setStatus] = useState<'idle' | 'exporting' | 'success' | 'error'>('idle');
+  const [progress, setProgress] = useState(0);
+  const [error, setError] = useState<string | null>(null);
+  const [outputPath, setOutputPath] = useState<string | null>(null);
+
+  // Listen for FFmpeg progress events
+  useEffect(() => {
+    if (!open) return;
+
+    // Set up event listener for export progress
+    const handleProgressEvent = (event: any) => {
+      const line = event.detail?.payload || '';
+
+      // Parse FFmpeg time output
+      // Example: "time=00:00:05.23"
+      const match = String(line).match(/time=(\d+):(\d+):(\d+\.\d+)/);
+      if (match) {
+        const hours = parseInt(match[1]);
+        const minutes = parseInt(match[2]);
+        const seconds = parseFloat(match[3]);
+        const currentTime = hours * 3600 + minutes * 60 + seconds;
+
+        const duration = trimEnd - trimStart;
+        const progressPercent = Math.min(100, (currentTime / duration) * 100);
+        setProgress(progressPercent);
+      }
+    };
+
+    // Add the event listener
+    window.addEventListener('export-progress', handleProgressEvent);
+
+    return () => {
+      window.removeEventListener('export-progress', handleProgressEvent);
+    };
+  }, [open, trimStart, trimEnd]);
+
+  // Start export
+  const handleExport = async () => {
+    console.log('[ExportDialog] Starting export...');
+    setStatus('exporting');
+    setProgress(0);
+    setError(null);
+
+    try {
+      if (!window.__TAURI_INVOKE__) {
+        throw new Error('Tauri context not available');
+      }
+
+      const invoke = window.__TAURI_INVOKE__;
+      console.log('[ExportDialog] Tauri context available');
+
+      // Prompt user for save location
+      const defaultName = videoName.replace(/\.(mp4|mov)$/i, '_trimmed.mp4');
+      console.log('[ExportDialog] Opening save dialog with default name:', defaultName);
+
+      const savePath = (await invoke('save_file_dialog', {
+        defaultFilename: defaultName
+      })) as string;
+
+      console.log('[ExportDialog] Save dialog result:', savePath);
+
+      if (!savePath) {
+        console.log('[ExportDialog] User cancelled save dialog');
+        setStatus('idle');
+        return; // User cancelled
+      }
+
+      // Ensure .mp4 extension
+      const finalOutputPath = savePath.endsWith('.mp4') ? savePath : `${savePath}.mp4`;
+      console.log('[ExportDialog] Final output path:', finalOutputPath);
+
+      // Call Rust trim command
+      console.log('[ExportDialog] Calling trim_video with:', {
+        inputPath,
+        outputPath: finalOutputPath,
+        startTime: trimStart,
+        endTime: trimEnd
+      });
+
+      const result = (await invoke('trim_video', {
+        inputPath,
+        outputPath: finalOutputPath,
+        startTime: trimStart,
+        endTime: trimEnd
+      })) as string;
+
+      console.log('[ExportDialog] trim_video completed:', result);
+      setOutputPath(result);
+      setStatus('success');
+      setProgress(100);
+
+    } catch (err: any) {
+      console.error('[ExportDialog] Export failed:', err);
+      setError(err.toString());
+      setStatus('error');
+    }
+  };
+
+  // Open output folder
+  const openFolder = async () => {
+    if (outputPath && window.__TAURI_INVOKE__) {
+      try {
+        console.log('[ExportDialog] Opening folder for path:', outputPath);
+
+        // Extract folder path (works for both / and \ separators)
+        const folderPath = outputPath.substring(0, Math.max(
+          outputPath.lastIndexOf('/'),
+          outputPath.lastIndexOf('\\')
+        ));
+
+        console.log('[ExportDialog] Extracted folder path:', folderPath);
+
+        const invoke = window.__TAURI_INVOKE__;
+        await invoke('plugin:opener|open_path', { path: folderPath });
+
+        console.log('[ExportDialog] Successfully opened folder');
+      } catch (err) {
+        console.error('[ExportDialog] Failed to open folder:', err);
+      }
+    }
+  };
+
+  // Reset and close
+  const handleClose = () => {
+    setStatus('idle');
+    setProgress(0);
+    setError(null);
+    setOutputPath(null);
+    onClose();
+  };
+
+  // Auto-start export when dialog opens
+  useEffect(() => {
+    if (open && status === 'idle') {
+      handleExport();
+    }
+  }, [open]);
+
+  return (
+    <Dialog open={open} onClose={status === 'exporting' ? undefined : handleClose} maxWidth="sm" fullWidth>
+      <DialogTitle>
+        {status === 'exporting' && 'Exporting Video...'}
+        {status === 'success' && 'Export Complete!'}
+        {status === 'error' && 'Export Failed'}
+        {status === 'idle' && 'Export Video'}
+      </DialogTitle>
+
+      <DialogContent>
+        {status === 'exporting' && (
+          <Box>
+            <Typography variant="body2" color="text.secondary" gutterBottom>
+              Trimming video from {trimStart.toFixed(1)}s to {trimEnd.toFixed(1)}s
+            </Typography>
+            <LinearProgress variant="determinate" value={progress} sx={{ mt: 2 }} />
+            <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: 'block' }}>
+              {progress.toFixed(0)}%
+            </Typography>
+          </Box>
+        )}
+
+        {status === 'success' && (
+          <Box sx={{ textAlign: 'center', py: 2 }}>
+            <CheckCircle color="success" sx={{ fontSize: 64, mb: 2 }} />
+            <Typography variant="body1" gutterBottom>
+              Video exported successfully!
+            </Typography>
+            <Typography variant="caption" color="text.secondary" sx={{ wordBreak: 'break-all' }}>
+              {outputPath}
+            </Typography>
+          </Box>
+        )}
+
+        {status === 'error' && (
+          <Box sx={{ textAlign: 'center', py: 2 }}>
+            <ErrorIcon color="error" sx={{ fontSize: 64, mb: 2 }} />
+            <Alert severity="error" sx={{ mt: 2 }}>
+              {error}
+            </Alert>
+          </Box>
+        )}
+      </DialogContent>
+
+      <DialogActions>
+        {status === 'success' && (
+          <>
+            <Button onClick={openFolder}>Open Folder</Button>
+            <Button onClick={handleClose} variant="contained">Done</Button>
+          </>
+        )}
+
+        {status === 'error' && (
+          <>
+            <Button onClick={handleExport}>Retry</Button>
+            <Button onClick={handleClose}>Close</Button>
+          </>
+        )}
+
+        {status === 'exporting' && (
+          <Typography variant="caption" color="text.secondary">
+            Please wait...
+          </Typography>
+        )}
+      </DialogActions>
+    </Dialog>
+  );
+}
+
+export default ExportDialog;
