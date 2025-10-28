@@ -64,7 +64,14 @@ function VideoPlayer() {
 
     // Capture the playing state at the moment of clip switch
     const shouldResumePlayback = isPlaying;
-    console.log('[VideoPlayer] Loading new video source:', videoSrc, 'shouldResumePlayback:', shouldResumePlayback);
+    const currentClip = getCurrentClip();
+    console.log('[VideoPlayer] Loading new video source:', {
+      videoSrc,
+      shouldResumePlayback,
+      isPlaying,
+      clipId: currentClip?.id,
+      clipName: currentClip?.name
+    });
 
     // Force the video to load the new source
     video.load();
@@ -195,18 +202,39 @@ function VideoPlayer() {
 
   // Handle video ended event
   const handleEnded = () => {
-    const clip = getCurrentClip();
-    if (!clip) {
+    // Use currentClipId to find which clip just ended
+    // (getCurrentClip() might already have moved to the next clip due to time updates)
+    if (!currentClipId) {
+      console.log('[VideoPlayer] No current clip ID, pausing');
       setPlaying(false);
       return;
     }
 
+    const endedClipIndex = clips.findIndex(c => c.id === currentClipId);
+    if (endedClipIndex === -1) {
+      console.log('[VideoPlayer] Ended clip not found, pausing');
+      setPlaying(false);
+      return;
+    }
+
+    console.log('[VideoPlayer] Clip ended:', {
+      clipId: currentClipId,
+      index: endedClipIndex,
+      totalClips: clips.length
+    });
+
     // Check if there's a next clip
-    const currentClipIndex = clips.findIndex(c => c.id === clip.id);
-    if (currentClipIndex < clips.length - 1) {
+    if (endedClipIndex < clips.length - 1) {
       // There's a next clip, transition to it
-      const nextClip = clips[currentClipIndex + 1];
-      console.log('[VideoPlayer] Clip ended, moving to next clip:', nextClip.id);
+      const nextClip = clips[endedClipIndex + 1];
+      console.log('[VideoPlayer] Moving to next clip:', nextClip.id);
+
+      // Ensure playing state is true before transitioning
+      if (!isPlaying) {
+        console.log('[VideoPlayer] Setting playing state to true before clip transition');
+        setPlaying(true);
+      }
+
       setCurrentTime(nextClip.startTimeInSequence);
       // Keep playing (don't pause)
     } else {
