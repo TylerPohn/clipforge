@@ -1,9 +1,12 @@
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 use tauri_plugin_dialog::DialogExt;
-use tauri::Emitter;
 use std::process::{Command, Stdio};
-use std::io::{BufRead, BufReader};
-use std::sync::mpsc;
+use std::sync::{Arc, Mutex};
+
+// Global state to track recording process
+lazy_static::lazy_static! {
+    static ref RECORDING_PROCESS: Arc<Mutex<Option<std::process::Child>>> = Arc::new(Mutex::new(None));
+}
 
 #[tauri::command]
 fn greet(name: &str) -> String {
@@ -16,7 +19,7 @@ async fn trim_video(
     output_path: String,
     start_time: f64,
     end_time: f64,
-    window: tauri::Window
+    _window: tauri::Window
 ) -> Result<String, String> {
     println!("[trim_video] Starting trim operation");
     println!("[trim_video] Input: {}", input_path);
@@ -158,12 +161,146 @@ fn get_video_file(video_path: &str) -> Result<Vec<u8>, String> {
         .map_err(|e| format!("Failed to read video file: {}", e))
 }
 
+#[tauri::command]
+fn start_screen_recording(
+    output_path: String,
+    _window: tauri::Window
+) -> Result<String, String> {
+    println!("[start_screen_recording] Starting screen recording");
+    println!("[start_screen_recording] Output path: {}", output_path);
+
+    // Platform-specific FFmpeg arguments
+    let args = if cfg!(target_os = "macos") {
+        vec![
+            "-f", "avfoundation",
+            "-framerate", "30",
+            "-i", "1",              // Screen capture (1 = main display)
+            "-pix_fmt", "yuv420p",
+            "-c:v", "libx264",
+            "-preset", "ultrafast",
+            &output_path
+        ]
+    } else if cfg!(target_os = "windows") {
+        vec![
+            "-f", "gdigrab",
+            "-framerate", "30",
+            "-i", "desktop",
+            "-pix_fmt", "yuv420p",
+            "-c:v", "libx264",
+            "-preset", "ultrafast",
+            &output_path
+        ]
+    } else {
+        return Err("Unsupported platform".to_string());
+    };
+
+    println!("[start_screen_recording] FFmpeg args: {:?}", args);
+
+    // Start FFmpeg process with stdin pipe for graceful shutdown
+    let child = Command::new("ffmpeg")
+        .args(&args)
+        .stdin(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("Failed to start FFmpeg: {}. Make sure you have granted screen recording permissions.", e))?;
+
+    println!("[start_screen_recording] FFmpeg process started");
+
+    // Store process in global state
+    let mut process = RECORDING_PROCESS.lock().unwrap();
+    *process = Some(child);
+
+    Ok("Recording started".to_string())
+}
+
+#[tauri::command]
+fn stop_screen_recording() -> Result<String, String> {
+    use std::io::Write;
+
+    println!("[stop_screen_recording] Stopping screen recording");
+
+    let mut process = RECORDING_PROCESS.lock().unwrap();
+
+    if let Some(mut child) = process.take() {
+        // Send 'q' to FFmpeg stdin to gracefully stop
+        if let Some(mut stdin) = child.stdin.take() {
+            println!("[stop_screen_recording] Sending 'q' to FFmpeg to stop gracefully");
+            if let Err(e) = stdin.write_all(b"q") {
+                println!("[stop_screen_recording] Warning: Failed to send 'q' to FFmpeg: {}", e);
+                // Fall back to kill if we can't write to stdin
+                child.kill()
+                    .map_err(|e| format!("Failed to stop recording: {}", e))?;
+            } else {
+                // Flush to ensure 'q' is sent
+                let _ = stdin.flush();
+                drop(stdin); // Close stdin
+            }
+        } else {
+            println!("[stop_screen_recording] No stdin available, using kill");
+            child.kill()
+                .map_err(|e| format!("Failed to stop recording: {}", e))?;
+        }
+
+        // Wait for FFmpeg to finish encoding
+        println!("[stop_screen_recording] Waiting for FFmpeg to finish encoding...");
+        child.wait()
+            .map_err(|e| format!("Failed to wait for FFmpeg: {}", e))?;
+
+        println!("[stop_screen_recording] Recording stopped successfully");
+        Ok("Recording stopped".to_string())
+    } else {
+        Err("No recording in progress".to_string())
+    }
+}
+
+#[tauri::command]
+fn is_recording() -> bool {
+    let process = RECORDING_PROCESS.lock().unwrap();
+    process.is_some()
+}
+
+#[tauri::command]
+fn move_file(from: String, to: String) -> Result<String, String> {
+    use std::fs;
+    println!("[move_file] Moving file from {} to {}", from, to);
+
+    fs::rename(&from, &to)
+        .map_err(|e| format!("Failed to move file: {}", e))?;
+
+    println!("[move_file] File moved successfully");
+    Ok("File moved".to_string())
+}
+
+#[tauri::command]
+fn delete_file(path: String) -> Result<String, String> {
+    use std::fs;
+    println!("[delete_file] Deleting file: {}", path);
+
+    fs::remove_file(&path)
+        .map_err(|e| format!("Failed to delete file: {}", e))?;
+
+    println!("[delete_file] File deleted successfully");
+    Ok("File deleted".to_string())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
-        .invoke_handler(tauri::generate_handler![greet, open_file_dialog, get_video_metadata, get_video_file, trim_video, save_file_dialog])
+        .invoke_handler(tauri::generate_handler![
+            greet,
+            open_file_dialog,
+            get_video_metadata,
+            get_video_file,
+            trim_video,
+            save_file_dialog,
+            start_screen_recording,
+            stop_screen_recording,
+            is_recording,
+            move_file,
+            delete_file
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

@@ -1,0 +1,304 @@
+import { useState, useEffect } from 'react';
+import {
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
+  Button,
+  Typography,
+  Box,
+  Alert,
+  Stack,
+  CircularProgress,
+  ToggleButtonGroup,
+  ToggleButton
+} from '@mui/material';
+import {
+  FiberManualRecord,
+  Stop,
+  Videocam,
+  DesktopWindows
+} from '@mui/icons-material';
+import { invoke } from '@tauri-apps/api/core';
+import { useVideoStore } from '../store/videoStore';
+import PermissionHelper from './PermissionHelper';
+
+interface RecordingDialogProps {
+  open: boolean;
+  onClose: () => void;
+}
+
+type RecordingSource = 'screen' | 'camera';
+
+function RecordingDialog({ open, onClose }: RecordingDialogProps) {
+  const [source, setSource] = useState<RecordingSource>('screen');
+  const [isRecording, setIsRecording] = useState(false);
+  const [recordingTime, setRecordingTime] = useState(0);
+  const [outputPath, setOutputPath] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [showPermissionHelper, setShowPermissionHelper] = useState(false);
+
+  const setVideo = useVideoStore((state) => state.setVideo);
+
+  // Timer for recording duration
+  useEffect(() => {
+    if (!isRecording) return;
+
+    const interval = setInterval(() => {
+      setRecordingTime(prev => prev + 1);
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, [isRecording]);
+
+  // Format time as MM:SS
+  const formatTime = (seconds: number) => {
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return `${mins}:${secs.toString().padStart(2, '0')}`;
+  };
+
+  // Start recording
+  const handleStartRecording = async () => {
+    setError(null);
+
+    try {
+      // Generate temporary file path
+      const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, -5);
+      const tempPath = `/tmp/${source}-recording-${timestamp}.mp4`;
+      setOutputPath(tempPath);
+
+      // Start recording based on source
+      if (source === 'screen') {
+        await invoke('start_screen_recording', { outputPath: tempPath });
+      } else {
+        setError('Camera recording is not yet implemented. Please select Screen.');
+        return;
+      }
+
+      setIsRecording(true);
+      setRecordingTime(0);
+
+    } catch (err: any) {
+      console.error('Failed to start recording:', err);
+      setError(err.toString());
+    }
+  };
+
+  // Stop recording
+  const handleStopRecording = async () => {
+    try {
+      // Stop the recording
+      if (source === 'screen') {
+        await invoke('stop_screen_recording');
+      } else {
+        return; // Camera not implemented
+      }
+
+      setIsRecording(false);
+
+      // Now prompt for save location
+      const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, -5);
+      const defaultName = `${source}-recording-${timestamp}.mp4`;
+
+      const savePath = await invoke<string>('save_file_dialog', {
+        defaultFilename: defaultName
+      });
+
+      if (!savePath) {
+        // User cancelled - delete temp file
+        if (outputPath) {
+          await invoke('delete_file', { path: outputPath }).catch(() => {
+            console.warn('Failed to delete temporary file');
+          });
+        }
+        onClose();
+        resetState();
+        return;
+      }
+
+      const finalPath = savePath.endsWith('.mp4') ? savePath : `${savePath}.mp4`;
+
+      // Move the temp file to the final location
+      if (outputPath) {
+        await invoke('move_file', { from: outputPath, to: finalPath });
+
+        // Auto-import the recording
+        const fileName = finalPath.split('/').pop() || finalPath.split('\\').pop() || 'recording.mp4';
+        setVideo(finalPath, fileName);
+      }
+
+      // Close dialog
+      onClose();
+      resetState();
+
+    } catch (err: any) {
+      console.error('Failed to stop recording:', err);
+      setError(err.toString());
+      setIsRecording(false);
+    }
+  };
+
+  // Reset state
+  const resetState = () => {
+    setIsRecording(false);
+    setRecordingTime(0);
+    setOutputPath(null);
+    setError(null);
+    setSource('screen');
+  };
+
+  // Cleanup on close
+  const handleClose = () => {
+    if (!isRecording) {
+      resetState();
+      onClose();
+    }
+  };
+
+  return (
+    <>
+      <Dialog
+        open={open}
+        onClose={handleClose}
+        maxWidth="sm"
+        fullWidth
+      >
+        <DialogTitle>Record Video</DialogTitle>
+
+        <DialogContent>
+          {!isRecording ? (
+            <Box>
+              {/* Source Selection */}
+              <Typography variant="subtitle2" gutterBottom>
+                Choose recording source:
+              </Typography>
+              <ToggleButtonGroup
+                value={source}
+                exclusive
+                onChange={(_, newSource) => {
+                  if (newSource) setSource(newSource);
+                }}
+                fullWidth
+                sx={{ mb: 3 }}
+              >
+                <ToggleButton value="screen">
+                  <Stack alignItems="center" spacing={1} sx={{ py: 1 }}>
+                    <DesktopWindows />
+                    <Typography variant="caption">Screen</Typography>
+                  </Stack>
+                </ToggleButton>
+                <ToggleButton value="camera" disabled>
+                  <Stack alignItems="center" spacing={1} sx={{ py: 1 }}>
+                    <Videocam />
+                    <Typography variant="caption">Camera (Coming Soon)</Typography>
+                  </Stack>
+                </ToggleButton>
+              </ToggleButtonGroup>
+
+              {/* macOS Permission Notice */}
+              {source === 'screen' && (
+                <Alert
+                  severity="info"
+                  sx={{ mb: 2 }}
+                  action={
+                    <Button size="small" onClick={() => setShowPermissionHelper(true)}>
+                      Help
+                    </Button>
+                  }
+                >
+                  <Typography variant="body2">
+                    <strong>First time?</strong> You'll need to grant screen recording permission.
+                  </Typography>
+                </Alert>
+              )}
+
+              {/* Error Display */}
+              {error && (
+                <Alert severity="error" sx={{ mb: 2 }}>
+                  {error}
+                </Alert>
+              )}
+            </Box>
+          ) : (
+            <Box sx={{ textAlign: 'center', py: 4 }}>
+              {/* Recording Indicator */}
+              <Box sx={{ position: 'relative', display: 'inline-flex', mb: 3 }}>
+                <CircularProgress
+                  size={100}
+                  thickness={2}
+                  sx={{
+                    color: 'error.main',
+                    animation: 'pulse 2s ease-in-out infinite',
+                    '@keyframes pulse': {
+                      '0%, 100%': { opacity: 1 },
+                      '50%': { opacity: 0.5 }
+                    }
+                  }}
+                />
+                <Box sx={{
+                  position: 'absolute',
+                  top: 0,
+                  left: 0,
+                  bottom: 0,
+                  right: 0,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center'
+                }}>
+                  <FiberManualRecord sx={{ fontSize: 40, color: 'error.main' }} />
+                </Box>
+              </Box>
+
+              <Typography variant="h4" gutterBottom>
+                {formatTime(recordingTime)}
+              </Typography>
+
+              <Typography variant="body2" color="text.secondary">
+                Recording {source}...
+              </Typography>
+
+              {outputPath && (
+                <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 2, wordBreak: 'break-all' }}>
+                  Saving to: {outputPath}
+                </Typography>
+              )}
+            </Box>
+          )}
+        </DialogContent>
+
+        <DialogActions>
+          {!isRecording ? (
+            <>
+              <Button onClick={handleClose}>Cancel</Button>
+              <Button
+                onClick={handleStartRecording}
+                variant="contained"
+                startIcon={<FiberManualRecord />}
+                color="error"
+              >
+                Start Recording
+              </Button>
+            </>
+          ) : (
+            <Button
+              onClick={handleStopRecording}
+              variant="contained"
+              startIcon={<Stop />}
+              fullWidth
+            >
+              Stop Recording
+            </Button>
+          )}
+        </DialogActions>
+      </Dialog>
+
+      <PermissionHelper
+        open={showPermissionHelper}
+        onClose={() => setShowPermissionHelper(false)}
+      />
+    </>
+  );
+}
+
+export default RecordingDialog;

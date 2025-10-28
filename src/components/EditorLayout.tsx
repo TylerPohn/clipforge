@@ -1,6 +1,6 @@
-import { AppBar, Toolbar, Button, Box, Typography, Chip } from '@mui/material';
-import { FiberManualRecord } from '@mui/icons-material';
+import { AppBar, Toolbar, Box, Typography, Chip } from '@mui/material';
 import ImportButton from './ImportButton';
+import RecordButton from './RecordButton';
 import ExportButton from './ExportButton';
 import DropZone from './DropZone';
 import VideoPlayer from './VideoPlayer';
@@ -27,9 +27,7 @@ function EditorLayout() {
 
           <ImportButton />
 
-          <Button color="inherit" startIcon={<FiberManualRecord />} sx={{ mr: 2 }}>
-            Record
-          </Button>
+          <RecordButton />
 
           <ExportButton />
         </Toolbar>
