@@ -22,6 +22,7 @@ import {
 import { invoke } from '@tauri-apps/api/core';
 import { useVideoStore } from '../store/videoStore';
 import PermissionHelper from './PermissionHelper';
+import CameraPreview from './CameraPreview';
 
 interface RecordingDialogProps {
   open: boolean;
@@ -72,8 +73,7 @@ function RecordingDialog({ open, onClose }: RecordingDialogProps) {
       if (source === 'screen') {
         await invoke('start_screen_recording', { outputPath: tempPath });
       } else {
-        setError('Camera recording is not yet implemented. Please select Screen.');
-        return;
+        await invoke('start_camera_recording', { outputPath: tempPath });
       }
 
       setIsRecording(true);
@@ -92,7 +92,7 @@ function RecordingDialog({ open, onClose }: RecordingDialogProps) {
       if (source === 'screen') {
         await invoke('stop_screen_recording');
       } else {
-        return; // Camera not implemented
+        await invoke('stop_camera_recording');
       }
 
       setIsRecording(false);
@@ -188,15 +188,20 @@ function RecordingDialog({ open, onClose }: RecordingDialogProps) {
                     <Typography variant="caption">Screen</Typography>
                   </Stack>
                 </ToggleButton>
-                <ToggleButton value="camera" disabled>
+                <ToggleButton value="camera">
                   <Stack alignItems="center" spacing={1} sx={{ py: 1 }}>
                     <Videocam />
-                    <Typography variant="caption">Camera (Coming Soon)</Typography>
+                    <Typography variant="caption">Camera</Typography>
                   </Stack>
                 </ToggleButton>
               </ToggleButtonGroup>
 
-              {/* macOS Permission Notice */}
+              {/* Camera Preview */}
+              {source === 'camera' && (
+                <CameraPreview isActive={true} />
+              )}
+
+              {/* Permission Notices */}
               {source === 'screen' && (
                 <Alert
                   severity="info"
@@ -209,6 +214,14 @@ function RecordingDialog({ open, onClose }: RecordingDialogProps) {
                 >
                   <Typography variant="body2">
                     <strong>First time?</strong> You'll need to grant screen recording permission.
+                  </Typography>
+                </Alert>
+              )}
+
+              {source === 'camera' && (
+                <Alert severity="info" sx={{ mb: 2 }}>
+                  <Typography variant="body2">
+                    <strong>First time?</strong> You'll need to grant camera permission.
                   </Typography>
                 </Alert>
               )}

@@ -53,3 +53,66 @@ No special permissions needed! Screen recording works out of the box with `gdigr
 ### Recording crashes immediately
 - FFmpeg not installed
 - Install with: `brew install ffmpeg` (macOS) or download from ffmpeg.org (Windows)
+
+---
+
+# Camera Permissions
+
+## macOS
+
+Camera access works similarly to screen recording:
+
+1. Click "Record" in ClipForge
+2. Select "Camera" as the source
+3. System will prompt: "ClipForge would like to access the camera"
+4. Click "OK" to grant permission
+
+### If Camera Doesn't Work
+
+1. Open **System Preferences** → **Security & Privacy**
+2. Go to **Privacy** → **Camera**
+3. Check the box next to **ClipForge**
+4. Restart ClipForge
+
+## Windows
+
+Camera permissions are handled by Windows:
+
+1. Click "Record" → Select "Camera"
+2. Windows may show a camera access prompt
+3. Click "Allow"
+
+### If Camera Doesn't Work
+
+1. Open **Settings** → **Privacy** → **Camera**
+2. Ensure "Allow apps to access your camera" is ON
+3. Find ClipForge in the list and enable it
+
+## Browser Permissions
+
+ClipForge uses your browser for camera preview. You may see two permission prompts:
+
+1. **Browser prompt**: For preview (in the app)
+2. **System prompt**: For FFmpeg recording (actual capture)
+
+Both need to be allowed for camera recording to work.
+
+## Troubleshooting Camera
+
+### "No camera found"
+- Camera is disconnected
+- Try plugging in an external webcam
+
+### "Camera in use by another app"
+- Close other apps using camera (Zoom, Skype, etc.)
+- Restart ClipForge
+
+### Windows: "Cannot open video device"
+- Device name might be different
+- Check device name with: `ffmpeg -list_devices true -f dshow -i dummy`
+- Update device name in code if needed
+
+### Camera preview is black
+- Permission not granted
+- Refresh browser or restart app
+- Check that camera LED is on (indicates active)

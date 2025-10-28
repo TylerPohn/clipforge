@@ -3,9 +3,10 @@ use tauri_plugin_dialog::DialogExt;
 use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex};
 
-// Global state to track recording process
+// Global state to track recording processes
 lazy_static::lazy_static! {
     static ref RECORDING_PROCESS: Arc<Mutex<Option<std::process::Child>>> = Arc::new(Mutex::new(None));
+    static ref CAMERA_RECORDING_PROCESS: Arc<Mutex<Option<std::process::Child>>> = Arc::new(Mutex::new(None));
 }
 
 #[tauri::command]
@@ -260,6 +261,108 @@ fn is_recording() -> bool {
 }
 
 #[tauri::command]
+fn start_camera_recording(
+    output_path: String,
+    _window: tauri::Window
+) -> Result<String, String> {
+    println!("[start_camera_recording] Starting camera recording");
+    println!("[start_camera_recording] Output path: {}", output_path);
+
+    // Platform-specific FFmpeg arguments for camera
+    let args = if cfg!(target_os = "macos") {
+        vec![
+            "-f", "avfoundation",
+            "-framerate", "30",
+            "-video_size", "1280x720",
+            "-i", "0",              // Camera device (0 = default camera)
+            "-pix_fmt", "yuv420p",
+            "-c:v", "libx264",
+            "-preset", "ultrafast",
+            &output_path
+        ]
+    } else if cfg!(target_os = "windows") {
+        vec![
+            "-f", "dshow",
+            "-framerate", "30",
+            "-video_size", "1280x720",
+            "-i", "video=Integrated Camera",
+            "-pix_fmt", "yuv420p",
+            "-c:v", "libx264",
+            "-preset", "ultrafast",
+            &output_path
+        ]
+    } else {
+        return Err("Unsupported platform".to_string());
+    };
+
+    println!("[start_camera_recording] FFmpeg args: {:?}", args);
+
+    // Start FFmpeg process with stdin pipe for graceful shutdown
+    let child = Command::new("ffmpeg")
+        .args(&args)
+        .stdin(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| {
+            format!(
+                "Failed to start camera recording: {}. Make sure camera is not in use by another app.",
+                e
+            )
+        })?;
+
+    println!("[start_camera_recording] FFmpeg process started");
+
+    // Store process
+    let mut process = CAMERA_RECORDING_PROCESS.lock().unwrap();
+    *process = Some(child);
+
+    Ok("Camera recording started".to_string())
+}
+
+#[tauri::command]
+fn stop_camera_recording() -> Result<String, String> {
+    use std::io::Write;
+
+    println!("[stop_camera_recording] Stopping camera recording");
+
+    let mut process = CAMERA_RECORDING_PROCESS.lock().unwrap();
+
+    if let Some(mut child) = process.take() {
+        // Send 'q' to FFmpeg stdin to gracefully stop
+        if let Some(mut stdin) = child.stdin.take() {
+            println!("[stop_camera_recording] Sending 'q' to FFmpeg to stop gracefully");
+            if let Err(e) = stdin.write_all(b"q") {
+                println!("[stop_camera_recording] Warning: Failed to send 'q' to FFmpeg: {}", e);
+                child.kill()
+                    .map_err(|e| format!("Failed to stop camera recording: {}", e))?;
+            } else {
+                let _ = stdin.flush();
+                drop(stdin);
+            }
+        } else {
+            println!("[stop_camera_recording] No stdin available, using kill");
+            child.kill()
+                .map_err(|e| format!("Failed to stop camera recording: {}", e))?;
+        }
+
+        println!("[stop_camera_recording] Waiting for FFmpeg to finish encoding...");
+        child.wait()
+            .map_err(|e| format!("Failed to wait for FFmpeg: {}", e))?;
+
+        println!("[stop_camera_recording] Camera recording stopped successfully");
+        Ok("Camera recording stopped".to_string())
+    } else {
+        Err("No camera recording in progress".to_string())
+    }
+}
+
+#[tauri::command]
+fn is_camera_recording() -> bool {
+    let process = CAMERA_RECORDING_PROCESS.lock().unwrap();
+    process.is_some()
+}
+
+#[tauri::command]
 fn move_file(from: String, to: String) -> Result<String, String> {
     use std::fs;
     println!("[move_file] Moving file from {} to {}", from, to);
@@ -298,6 +401,9 @@ pub fn run() {
             start_screen_recording,
             stop_screen_recording,
             is_recording,
+            start_camera_recording,
+            stop_camera_recording,
+            is_camera_recording,
             move_file,
             delete_file
         ])
