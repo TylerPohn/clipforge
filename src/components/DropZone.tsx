@@ -1,51 +1,121 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Box, Typography, Paper } from '@mui/material';
 import { CloudUpload } from '@mui/icons-material';
 import { useVideoStore } from '../store/videoStore';
+import { getCurrentWindow } from '@tauri-apps/api/window';
 
 interface DropZoneProps {
   children?: React.ReactNode;
 }
 
+// Global flag to prevent duplicate listener setup
+let globalListenerSetup = false;
+let globalUnlisten: (() => void) | null = null;
+
+// Track recently processed files to prevent duplicates
+const recentlyProcessed = new Map<string, number>();
+const DUPLICATE_WINDOW_MS = 1000; // 1 second window to catch duplicates
+
 function DropZone({ children }: DropZoneProps) {
   const [isDragging, setIsDragging] = useState(false);
-  const addClip = useVideoStore((state) => state.addClip);
   const clips = useVideoStore((state) => state.clips);
 
+  useEffect(() => {
+    // Prevent duplicate listener setup globally
+    if (globalListenerSetup) {
+      console.log('[DropZone] Listener already set up globally, skipping');
+      return;
+    }
+
+    // Set flag immediately to prevent race condition
+    globalListenerSetup = true;
+
+    const setupFileDropListener = async () => {
+      try {
+        // Get the current window from Tauri
+        const currentWindow = getCurrentWindow();
+
+        // Listen for file drop events
+        globalUnlisten = await currentWindow.onDragDropEvent((event: any) => {
+          console.log('[DropZone] Drag drop event:', event);
+
+          if (event.payload.type === 'over') {
+            // We can't update state here since we're outside component scope
+            // Visual feedback will be handled by Tauri
+          } else if (event.payload.type === 'drop') {
+            const { paths } = event.payload;
+
+            if (paths && paths.length > 0) {
+              // Handle each dropped file
+              paths.forEach((filePath: string) => {
+                console.log('[DropZone] File dropped:', filePath);
+
+                // Check if this file was recently processed
+                const now = Date.now();
+                const lastProcessed = recentlyProcessed.get(filePath);
+
+                if (lastProcessed && (now - lastProcessed) < DUPLICATE_WINDOW_MS) {
+                  console.log('[DropZone] Skipping duplicate file drop:', filePath);
+                  return;
+                }
+
+                // Mark this file as processed
+                recentlyProcessed.set(filePath, now);
+
+                // Clean up old entries (older than 2x the window)
+                for (const [path, timestamp] of recentlyProcessed.entries()) {
+                  if (now - timestamp > DUPLICATE_WINDOW_MS * 2) {
+                    recentlyProcessed.delete(path);
+                  }
+                }
+
+                // Extract filename from path
+                const fileName = filePath.split('/').pop() || filePath.split('\\').pop() || 'unknown';
+
+                // Validate extension
+                const ext = fileName.split('.').pop()?.toLowerCase();
+                if (ext === 'mp4' || ext === 'mov') {
+                  // Access store directly instead of through hook
+                  const clipId = useVideoStore.getState().addClip(filePath, fileName);
+                  console.log('[DropZone] Clip added:', { clipId, filePath, fileName });
+                } else {
+                  alert('Please drop an MP4 or MOV file');
+                }
+              });
+            }
+          }
+        });
+
+        console.log('[DropZone] File drop listener set up successfully');
+      } catch (error) {
+        console.error('[DropZone] Error setting up file drop listener:', error);
+        globalListenerSetup = false; // Reset on error
+      }
+    };
+
+    setupFileDropListener();
+
+    // Don't cleanup on unmount - keep the global listener alive
+    return () => {
+      // Intentionally empty - we want the listener to persist
+    };
+  }, []);
+
+  // Keep these for visual feedback in case HTML5 drag events still fire
   const handleDragOver = (e: React.DragEvent<HTMLDivElement>) => {
     e.preventDefault();
     e.stopPropagation();
-    setIsDragging(true);
   };
 
   const handleDragLeave = (e: React.DragEvent<HTMLDivElement>) => {
     e.preventDefault();
     e.stopPropagation();
-    setIsDragging(false);
   };
 
   const handleDrop = (e: React.DragEvent<HTMLDivElement>) => {
     e.preventDefault();
     e.stopPropagation();
-    setIsDragging(false);
-
-    const files = e.dataTransfer.files;
-    if (files && files.length > 0) {
-      const file = files[0];
-      const fileName = file.name;
-
-      // Validate extension
-      const ext = fileName.split('.').pop()?.toLowerCase();
-      if (ext === 'mp4' || ext === 'mov') {
-        // In the Tauri app context, we can access the full path
-        // In browser, we use the file name as identifier
-        const filePath = (file as any).path || fileName;
-        const clipId = addClip(filePath, fileName);
-        console.log('File dropped:', { clipId, filePath });
-      } else {
-        alert('Please drop an MP4 or MOV file');
-      }
-    }
+    // Tauri events will handle the actual drop
   };
 
   // Show drop zone only when no clips are loaded
