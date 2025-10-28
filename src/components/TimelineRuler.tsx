@@ -9,6 +9,7 @@ function TimelineRuler() {
   const [isDragging, setIsDragging] = useState<'start' | 'end' | 'playhead' | null>(null);
 
   const {
+    clips,
     videoDuration,
     currentTime,
     trimStart,
@@ -27,7 +28,7 @@ function TimelineRuler() {
   // Draw timeline on canvas
   useEffect(() => {
     const canvas = canvasRef.current;
-    if (!canvas || !videoDuration) return;
+    if (!canvas || !videoDuration || clips.length === 0) return;
 
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
@@ -38,18 +39,52 @@ function TimelineRuler() {
     // Clear canvas
     ctx.clearRect(0, 0, width, height);
 
-    // Calculate pixel positions
+    // Draw background
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.05)';
+    ctx.fillRect(0, 0, width, height);
+
+    // Draw each clip as a separate block
+    clips.forEach((clip, index) => {
+      if (!clip.duration) return;
+
+      const clipStartX = (clip.startTimeInSequence / videoDuration) * width;
+      const clipEndX = ((clip.startTimeInSequence + clip.duration) / videoDuration) * width;
+      const clipWidth = clipEndX - clipStartX;
+
+      // Alternate colors for visual distinction
+      const colors = [
+        'rgba(0, 188, 212, 0.3)', // Cyan
+        'rgba(156, 39, 176, 0.3)', // Purple
+        'rgba(255, 152, 0, 0.3)',  // Orange
+        'rgba(76, 175, 80, 0.3)',  // Green
+      ];
+      ctx.fillStyle = colors[index % colors.length];
+      ctx.fillRect(clipStartX, 0, clipWidth, height);
+
+      // Draw clip boundaries
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.5)';
+      ctx.fillRect(clipStartX, 0, 2, height);
+      ctx.fillRect(clipEndX - 2, 0, 2, height);
+
+      // Draw clip name (if space permits)
+      if (clipWidth > 60) {
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.8)';
+        ctx.font = '11px sans-serif';
+        ctx.textBaseline = 'top';
+        const clipName = clip.name.length > 15 ? clip.name.substring(0, 12) + '...' : clip.name;
+        ctx.fillText(clipName, clipStartX + 4, 4);
+      }
+    });
+
+    // Calculate pixel positions for trim handles
     const trimStartX = (trimStart / videoDuration) * width;
     const trimEndX = (trimEnd / videoDuration) * width;
     const playheadX = (currentTime / videoDuration) * width;
 
-    // Draw background (non-trimmed regions) - slightly visible
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.05)';
-    ctx.fillRect(0, 0, width, height);
-
-    // Draw trimmed region (highlighted in cyan)
-    ctx.fillStyle = 'rgba(0, 188, 212, 0.2)';
-    ctx.fillRect(trimStartX, 0, trimEndX - trimStartX, height);
+    // Draw trimmed region overlay (dimmed areas outside trim)
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+    ctx.fillRect(0, 0, trimStartX, height);
+    ctx.fillRect(trimEndX, 0, width - trimEndX, height);
 
     // Draw trim start handle (left side)
     ctx.fillStyle = '#00bcd4';
@@ -59,16 +94,16 @@ function TimelineRuler() {
     ctx.fillStyle = '#00bcd4';
     ctx.fillRect(trimEndX - 2, 0, 4, height);
 
-    // Draw playhead (pink/red line)
+    // Draw playhead (pink/red line) - on top of everything
     ctx.fillStyle = '#ff4081';
     ctx.fillRect(playheadX - 1, 0, 2, height);
 
     // Draw time markers with labels
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.5)';
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.7)';
     ctx.font = '10px monospace';
     ctx.textBaseline = 'bottom';
 
-    const markerInterval = Math.ceil(videoDuration / 10); // ~10 markers across timeline
+    const markerInterval = Math.max(1, Math.ceil(videoDuration / 10)); // ~10 markers across timeline
     for (let i = 0; i <= videoDuration; i += markerInterval) {
       const x = (i / videoDuration) * width;
       // Draw marker tick
@@ -77,7 +112,7 @@ function TimelineRuler() {
       ctx.fillText(formatTime(i), x + 2, height - 12);
     }
 
-  }, [videoDuration, trimStart, trimEnd, currentTime]);
+  }, [clips, videoDuration, trimStart, trimEnd, currentTime, formatTime]);
 
   // Handle mouse down (start dragging or seeking)
   const handleMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {

@@ -5,6 +5,7 @@ import ExportButton from './ExportButton';
 import DropZone from './DropZone';
 import VideoPlayer from './VideoPlayer';
 import TimelineRuler from './TimelineRuler';
+import MediaPanel from './MediaPanel';
 import { useVideoStore } from '../store/videoStore';
 import { useVideoMetadata } from '../hooks/useVideoMetadata';
 import { useKeyboardShortcuts } from '../hooks/useKeyboardShortcuts';
@@ -14,7 +15,7 @@ function EditorLayout() {
   useVideoMetadata();
   useKeyboardShortcuts();
 
-  const { videoName, videoDuration, videoResolution } = useVideoStore();
+  const { clips, videoDuration, videoResolution } = useVideoStore();
 
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
@@ -33,12 +34,12 @@ function EditorLayout() {
         </Toolbar>
       </AppBar>
 
-      {/* Video info chips */}
-      {videoName && (
+      {/* Sequence info chips */}
+      {clips.length > 0 && (
         <Box sx={{ p: 2, display: 'flex', gap: 1 }}>
-          <Chip label={videoName} color="primary" />
+          <Chip label={`${clips.length} ${clips.length === 1 ? 'Clip' : 'Clips'}`} color="primary" />
           {videoDuration && (
-            <Chip label={`${videoDuration.toFixed(1)}s`} />
+            <Chip label={`Total: ${videoDuration.toFixed(1)}s`} />
           )}
           {videoResolution && (
             <Chip label={`${videoResolution.width}x${videoResolution.height}`} />
@@ -50,6 +51,9 @@ function EditorLayout() {
       <DropZone>
         <VideoPlayer />
       </DropZone>
+
+      {/* Media Panel - shows all imported clips */}
+      <MediaPanel />
 
       {/* Timeline Footer */}
       <TimelineRuler />

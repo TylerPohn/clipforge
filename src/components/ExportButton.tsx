@@ -11,6 +11,7 @@ function ExportButton() {
     videoPath,
     videoName,
     videoDuration,
+    videoResolution,
     trimStart,
     trimEnd
   } = useVideoStore();
@@ -54,6 +55,7 @@ function ExportButton() {
           trimStart={trimStart}
           trimEnd={trimEnd}
           videoName={videoName}
+          videoResolution={videoResolution || undefined}
         />
       )}
     </>

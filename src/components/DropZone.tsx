@@ -9,8 +9,8 @@ interface DropZoneProps {
 
 function DropZone({ children }: DropZoneProps) {
   const [isDragging, setIsDragging] = useState(false);
-  const setVideo = useVideoStore((state) => state.setVideo);
-  const videoPath = useVideoStore((state) => state.videoPath);
+  const addClip = useVideoStore((state) => state.addClip);
+  const clips = useVideoStore((state) => state.clips);
 
   const handleDragOver = (e: React.DragEvent<HTMLDivElement>) => {
     e.preventDefault();
@@ -40,16 +40,16 @@ function DropZone({ children }: DropZoneProps) {
         // In the Tauri app context, we can access the full path
         // In browser, we use the file name as identifier
         const filePath = (file as any).path || fileName;
-        setVideo(filePath, fileName);
-        console.log('File dropped:', filePath);
+        const clipId = addClip(filePath, fileName);
+        console.log('File dropped:', { clipId, filePath });
       } else {
         alert('Please drop an MP4 or MOV file');
       }
     }
   };
 
-  // Show drop zone only when no video is loaded
-  if (videoPath) {
+  // Show drop zone only when no clips are loaded
+  if (clips.length > 0) {
     return <>{children}</>;
   }
 

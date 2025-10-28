@@ -2,6 +2,7 @@
 use tauri_plugin_dialog::DialogExt;
 use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex};
+use serde::{Deserialize, Serialize};
 
 // Global state to track recording processes
 lazy_static::lazy_static! {
@@ -9,9 +10,41 @@ lazy_static::lazy_static! {
     static ref CAMERA_RECORDING_PROCESS: Arc<Mutex<Option<std::process::Child>>> = Arc::new(Mutex::new(None));
 }
 
+// Recording options structure
+#[derive(Debug, Deserialize)]
+struct RecordingOptions {
+    resolution: String, // "720p", "1080p", or "source"
+    #[serde(default)]
+    source_width: Option<i32>,
+    #[serde(default)]
+    source_height: Option<i32>,
+}
+
+#[derive(Debug, Serialize)]
+struct ScreenResolution {
+    width: i32,
+    height: i32,
+}
+
+#[derive(Debug, Serialize)]
+struct CameraCapabilities {
+    native_width: i32,
+    native_height: i32,
+    supported_resolutions: Vec<String>,
+}
+
 #[tauri::command]
 fn greet(name: &str) -> String {
     format!("Hello, {}! You've been greeted from Rust!", name)
+}
+
+#[derive(Debug, Deserialize)]
+struct ExportOptions {
+    resolution: Option<String>, // "720p", "1080p", or "source"
+    #[serde(default)]
+    source_width: Option<i32>,
+    #[serde(default)]
+    source_height: Option<i32>,
 }
 
 #[tauri::command]
@@ -20,6 +53,7 @@ async fn trim_video(
     output_path: String,
     start_time: f64,
     end_time: f64,
+    export_options: Option<ExportOptions>,
     _window: tauri::Window
 ) -> Result<String, String> {
     println!("[trim_video] Starting trim operation");
@@ -41,18 +75,71 @@ async fn trim_video(
     println!("[trim_video] Start string: {}", start_str);
     println!("[trim_video] Duration: {}", duration);
 
+    // Parse export options
+    let opts = export_options.unwrap_or_else(|| ExportOptions {
+        resolution: Some("source".to_string()),
+        source_width: None,
+        source_height: None,
+    });
+
+    // Determine resolution and bitrate for export
+    let (should_scale, scale_filter, bitrate) = match opts.resolution.as_deref() {
+        Some("720p") => {
+            println!("[trim_video] Exporting at 720p resolution");
+            (true, "scale=1280:720", "2500k")
+        }
+        Some("1080p") => {
+            println!("[trim_video] Exporting at 1080p resolution");
+            (true, "scale=1920:1080", "5000k")
+        }
+        Some("source") | None => {
+            println!("[trim_video] Exporting at source resolution (no scaling)");
+            (false, "", "8000k")
+        }
+        Some(res) => {
+            return Err(format!("Invalid resolution: {}", res));
+        }
+    };
+
+    // Build FFmpeg arguments
+    let mut args = vec![
+        "-y".to_string(),                        // Overwrite output file
+        "-ss".to_string(), start_str,            // Start time
+        "-i".to_string(), input_path,            // Input file
+        "-t".to_string(), duration.to_string(),  // Duration
+    ];
+
+    // Add video filter if scaling is needed
+    if should_scale {
+        args.push("-vf".to_string());
+        args.push(scale_filter.to_string());
+    }
+
+    // Add encoding options
+    if should_scale {
+        // Re-encode when scaling
+        args.push("-c:v".to_string());
+        args.push("libx264".to_string());
+        args.push("-preset".to_string());
+        args.push("fast".to_string());
+        args.push("-b:v".to_string());
+        args.push(bitrate.to_string());
+    } else {
+        // Copy codec for source resolution (fast)
+        args.push("-c".to_string());
+        args.push("copy".to_string());
+    }
+
+    args.push("-avoid_negative_ts".to_string());
+    args.push("make_zero".to_string());
+    args.push(output_path.clone());
+
+    println!("[trim_video] FFmpeg args: {:?}", args);
+
     // FFmpeg command - don't capture stderr to avoid blocking
     println!("[trim_video] Spawning FFmpeg process (without stderr capture)...");
     let mut child = Command::new("ffmpeg")
-        .args(&[
-            "-y",                    // Overwrite output file
-            "-ss", &start_str,       // Start time
-            "-i", &input_path,       // Input file
-            "-t", &duration.to_string(), // Duration
-            "-c", "copy",            // Copy codec (fast, no re-encode)
-            "-avoid_negative_ts", "make_zero",
-            &output_path
-        ])
+        .args(&args)
         .spawn()
         .map_err(|e| {
             let err_msg = format!("Failed to start FFmpeg: {}", e);
@@ -165,20 +252,47 @@ fn get_video_file(video_path: &str) -> Result<Vec<u8>, String> {
 #[tauri::command]
 fn start_screen_recording(
     output_path: String,
+    options: Option<RecordingOptions>,
     _window: tauri::Window
 ) -> Result<String, String> {
     println!("[start_screen_recording] Starting screen recording");
     println!("[start_screen_recording] Output path: {}", output_path);
 
+    // Parse resolution options
+    let opts = options.unwrap_or_else(|| RecordingOptions {
+        resolution: "720p".to_string(),
+        source_width: None,
+        source_height: None,
+    });
+
+    // Determine resolution and bitrate
+    let (width, height, bitrate) = match opts.resolution.as_str() {
+        "720p" => (1280, 720, "2500k"),
+        "1080p" => (1920, 1080, "5000k"),
+        "source" => {
+            if let (Some(w), Some(h)) = (opts.source_width, opts.source_height) {
+                (w, h, "8000k")
+            } else {
+                return Err("Source resolution not available".to_string());
+            }
+        }
+        _ => return Err(format!("Invalid resolution: {}", opts.resolution)),
+    };
+
+    println!("[start_screen_recording] Resolution: {}x{} @ {} bitrate", width, height, bitrate);
+
     // Platform-specific FFmpeg arguments
+    let scale_filter = format!("scale={}:{}", width, height);
     let args = if cfg!(target_os = "macos") {
         vec![
             "-f", "avfoundation",
             "-framerate", "30",
             "-i", "1",              // Screen capture (1 = main display)
+            "-vf", &scale_filter,
             "-pix_fmt", "yuv420p",
             "-c:v", "libx264",
             "-preset", "ultrafast",
+            "-b:v", bitrate,
             &output_path
         ]
     } else if cfg!(target_os = "windows") {
@@ -186,9 +300,11 @@ fn start_screen_recording(
             "-f", "gdigrab",
             "-framerate", "30",
             "-i", "desktop",
+            "-vf", &scale_filter,
             "-pix_fmt", "yuv420p",
             "-c:v", "libx264",
             "-preset", "ultrafast",
+            "-b:v", bitrate,
             &output_path
         ]
     } else {
@@ -263,32 +379,59 @@ fn is_recording() -> bool {
 #[tauri::command]
 fn start_camera_recording(
     output_path: String,
+    options: Option<RecordingOptions>,
     _window: tauri::Window
 ) -> Result<String, String> {
     println!("[start_camera_recording] Starting camera recording");
     println!("[start_camera_recording] Output path: {}", output_path);
 
+    // Parse resolution options
+    let opts = options.unwrap_or_else(|| RecordingOptions {
+        resolution: "720p".to_string(),
+        source_width: None,
+        source_height: None,
+    });
+
+    // Determine resolution and bitrate
+    let (width, height, bitrate) = match opts.resolution.as_str() {
+        "720p" => (1280, 720, "2500k"),
+        "1080p" => (1920, 1080, "5000k"),
+        "source" => {
+            if let (Some(w), Some(h)) = (opts.source_width, opts.source_height) {
+                (w, h, "8000k")
+            } else {
+                return Err("Source resolution not available".to_string());
+            }
+        }
+        _ => return Err(format!("Invalid resolution: {}", opts.resolution)),
+    };
+
+    println!("[start_camera_recording] Resolution: {}x{} @ {} bitrate", width, height, bitrate);
+
     // Platform-specific FFmpeg arguments for camera
+    let resolution_str = format!("{}x{}", width, height);
     let args = if cfg!(target_os = "macos") {
         vec![
             "-f", "avfoundation",
             "-framerate", "30",
-            "-video_size", "1280x720",
+            "-video_size", &resolution_str,
             "-i", "0",              // Camera device (0 = default camera)
             "-pix_fmt", "yuv420p",
             "-c:v", "libx264",
             "-preset", "ultrafast",
+            "-b:v", bitrate,
             &output_path
         ]
     } else if cfg!(target_os = "windows") {
         vec![
             "-f", "dshow",
             "-framerate", "30",
-            "-video_size", "1280x720",
+            "-video_size", &resolution_str,
             "-i", "video=Integrated Camera",
             "-pix_fmt", "yuv420p",
             "-c:v", "libx264",
             "-preset", "ultrafast",
+            "-b:v", bitrate,
             &output_path
         ]
     } else {
@@ -363,6 +506,28 @@ fn is_camera_recording() -> bool {
 }
 
 #[tauri::command]
+fn get_screen_resolution() -> Result<ScreenResolution, String> {
+    // Note: These are default values. In a production app, you might want to query
+    // the actual screen resolution using platform-specific APIs.
+    // For now, returning common defaults that work with scaling filters
+    Ok(ScreenResolution {
+        width: 1920,
+        height: 1080,
+    })
+}
+
+#[tauri::command]
+fn get_camera_capabilities() -> Result<CameraCapabilities, String> {
+    // Note: These are default values. Camera capabilities vary by device.
+    // Supported resolutions should match what's being used in the recording commands.
+    Ok(CameraCapabilities {
+        native_width: 1920,
+        native_height: 1080,
+        supported_resolutions: vec!["720p".to_string(), "1080p".to_string(), "source".to_string()],
+    })
+}
+
+#[tauri::command]
 fn move_file(from: String, to: String) -> Result<String, String> {
     use std::fs;
     println!("[move_file] Moving file from {} to {}", from, to);
@@ -404,6 +569,8 @@ pub fn run() {
             start_camera_recording,
             stop_camera_recording,
             is_camera_recording,
+            get_screen_resolution,
+            get_camera_capabilities,
             move_file,
             delete_file
         ])

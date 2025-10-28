@@ -8,9 +8,14 @@ import {
   LinearProgress,
   Typography,
   Box,
-  Alert
+  Alert,
+  ToggleButtonGroup,
+  ToggleButton,
+  Stack
 } from '@mui/material';
 import { CheckCircle, Error as ErrorIcon } from '@mui/icons-material';
+import { VideoResolution, RESOLUTION_OPTIONS } from '../types/recording';
+import ResolutionSelector from './ResolutionSelector';
 
 declare const window: any;
 
@@ -21,6 +26,7 @@ interface ExportDialogProps {
   trimStart: number;
   trimEnd: number;
   videoName: string;
+  videoResolution?: { width: number; height: number };
 }
 
 function ExportDialog({
@@ -29,12 +35,14 @@ function ExportDialog({
   inputPath,
   trimStart,
   trimEnd,
-  videoName
+  videoName,
+  videoResolution
 }: ExportDialogProps) {
   const [status, setStatus] = useState<'idle' | 'exporting' | 'success' | 'error'>('idle');
   const [progress, setProgress] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [outputPath, setOutputPath] = useState<string | null>(null);
+  const [selectedResolution, setSelectedResolution] = useState<VideoResolution>(VideoResolution['720P']);
 
   // Listen for FFmpeg progress events
   useEffect(() => {
@@ -102,19 +110,27 @@ function ExportDialog({
       const finalOutputPath = savePath.endsWith('.mp4') ? savePath : `${savePath}.mp4`;
       console.log('[ExportDialog] Final output path:', finalOutputPath);
 
-      // Call Rust trim command
+      // Call Rust trim command with export options
+      const exportOptions = {
+        resolution: selectedResolution,
+        source_width: videoResolution?.width,
+        source_height: videoResolution?.height,
+      };
+
       console.log('[ExportDialog] Calling trim_video with:', {
         inputPath,
         outputPath: finalOutputPath,
         startTime: trimStart,
-        endTime: trimEnd
+        endTime: trimEnd,
+        exportOptions
       });
 
       const result = (await invoke('trim_video', {
         inputPath,
         outputPath: finalOutputPath,
         startTime: trimStart,
-        endTime: trimEnd
+        endTime: trimEnd,
+        exportOptions
       })) as string;
 
       console.log('[ExportDialog] trim_video completed:', result);
@@ -162,12 +178,7 @@ function ExportDialog({
     onClose();
   };
 
-  // Auto-start export when dialog opens
-  useEffect(() => {
-    if (open && status === 'idle') {
-      handleExport();
-    }
-  }, [open]);
+  // Don't auto-start export - user must select resolution and click Export button
 
   return (
     <Dialog open={open} onClose={status === 'exporting' ? undefined : handleClose} maxWidth="sm" fullWidth>
@@ -179,8 +190,30 @@ function ExportDialog({
       </DialogTitle>
 
       <DialogContent>
+        {status === 'idle' && (
+          <Box>
+            <Typography variant="subtitle2" gutterBottom>
+              Export Settings
+            </Typography>
+            <Box sx={{ mb: 3, mt: 2 }}>
+              <ResolutionSelector
+                value={selectedResolution}
+                onChange={setSelectedResolution}
+                source="screen"
+                sourceResolution={videoResolution}
+              />
+            </Box>
+            <Typography variant="caption" color="text.secondary" display="block">
+              Video will be trimmed from {trimStart.toFixed(1)}s to {trimEnd.toFixed(1)}s
+            </Typography>
+          </Box>
+        )}
+
         {status === 'exporting' && (
           <Box>
+            <Typography variant="body2" color="text.secondary" gutterBottom>
+              Exporting at {RESOLUTION_OPTIONS[selectedResolution].label}
+            </Typography>
             <Typography variant="body2" color="text.secondary" gutterBottom>
               Trimming video from {trimStart.toFixed(1)}s to {trimEnd.toFixed(1)}s
             </Typography>
@@ -214,6 +247,13 @@ function ExportDialog({
       </DialogContent>
 
       <DialogActions>
+        {status === 'idle' && (
+          <>
+            <Button onClick={handleClose}>Cancel</Button>
+            <Button onClick={handleExport} variant="contained">Export</Button>
+          </>
+        )}
+
         {status === 'success' && (
           <>
             <Button onClick={openFolder}>Open Folder</Button>

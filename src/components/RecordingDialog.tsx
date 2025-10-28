@@ -21,8 +21,11 @@ import {
 } from '@mui/icons-material';
 import { invoke } from '@tauri-apps/api/core';
 import { useVideoStore } from '../store/videoStore';
+import { VideoResolution } from '../types/recording';
+import { useRecordingResolution } from '../hooks/useRecordingResolution';
 import PermissionHelper from './PermissionHelper';
 import CameraPreview from './CameraPreview';
+import ResolutionSelector from './ResolutionSelector';
 
 interface RecordingDialogProps {
   open: boolean;
@@ -40,6 +43,26 @@ function RecordingDialog({ open, onClose }: RecordingDialogProps) {
   const [showPermissionHelper, setShowPermissionHelper] = useState(false);
 
   const setVideo = useVideoStore((state) => state.setVideo);
+  const selectedResolution = useVideoStore((state) => state.selectedResolution);
+  const setSelectedResolution = useVideoStore((state) => state.setSelectedResolution);
+  const setScreenSourceResolution = useVideoStore((state) => state.setScreenSourceResolution);
+  const setCameraSourceResolution = useVideoStore((state) => state.setCameraSourceResolution);
+
+  const { sourceResolution: screenResolution } = useRecordingResolution('screen');
+  const { sourceResolution: cameraResolution } = useRecordingResolution('camera');
+
+  // Update store when resolutions are loaded
+  useEffect(() => {
+    if (screenResolution) {
+      setScreenSourceResolution(screenResolution);
+    }
+  }, [screenResolution, setScreenSourceResolution]);
+
+  useEffect(() => {
+    if (cameraResolution) {
+      setCameraSourceResolution(cameraResolution);
+    }
+  }, [cameraResolution, setCameraSourceResolution]);
 
   // Timer for recording duration
   useEffect(() => {
@@ -69,11 +92,24 @@ function RecordingDialog({ open, onClose }: RecordingDialogProps) {
       const tempPath = `/tmp/${source}-recording-${timestamp}.mp4`;
       setOutputPath(tempPath);
 
+      // Prepare recording options
+      const recordingOptions = {
+        resolution: selectedResolution,
+        source_width: source === 'screen' ? screenResolution?.width : cameraResolution?.width,
+        source_height: source === 'screen' ? screenResolution?.height : cameraResolution?.height,
+      };
+
       // Start recording based on source
       if (source === 'screen') {
-        await invoke('start_screen_recording', { outputPath: tempPath });
+        await invoke('start_screen_recording', {
+          outputPath: tempPath,
+          options: recordingOptions
+        });
       } else {
-        await invoke('start_camera_recording', { outputPath: tempPath });
+        await invoke('start_camera_recording', {
+          outputPath: tempPath,
+          options: recordingOptions
+        });
       }
 
       setIsRecording(true);
@@ -200,6 +236,18 @@ function RecordingDialog({ open, onClose }: RecordingDialogProps) {
               {source === 'camera' && (
                 <CameraPreview isActive={true} isRecording={false} />
               )}
+
+              {/* Resolution Selector */}
+              <Box sx={{ mb: 3, mt: 3 }}>
+                <ResolutionSelector
+                  value={selectedResolution}
+                  onChange={setSelectedResolution}
+                  source={source}
+                  sourceResolution={
+                    source === 'screen' ? screenResolution : cameraResolution
+                  }
+                />
+              </Box>
 
               {/* Permission Notices */}
               {source === 'screen' && (

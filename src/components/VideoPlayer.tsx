@@ -13,9 +13,10 @@ declare const window: any;
 function VideoPlayer() {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [videoSrc, setVideoSrc] = useState<string | null>(null);
+  const [currentClipId, setCurrentClipId] = useState<string | null>(null);
 
   const {
-    videoPath,
+    clips,
     isPlaying,
     currentTime,
     volume,
@@ -24,18 +25,27 @@ function VideoPlayer() {
     trimEnd,
     setPlaying,
     setCurrentTime,
-    setVolume
+    setVolume,
+    getCurrentClip
   } = useVideoStore();
 
-  // Fetch video file and create blob URL
+  // Determine which clip should be playing based on current time
   useEffect(() => {
-    if (!videoPath) {
-      console.log('[VideoPlayer] No video path, clearing src');
+    const clip = getCurrentClip();
+
+    if (!clip) {
+      console.log('[VideoPlayer] No clip to play');
       setVideoSrc(null);
+      setCurrentClipId(null);
       return;
     }
 
-    console.log('[VideoPlayer] Loading video from path:', videoPath);
+    // Only load new video if we've switched to a different clip
+    if (clip.id === currentClipId) {
+      return;
+    }
+
+    console.log('[VideoPlayer] Loading clip:', { id: clip.id, path: clip.path });
 
     const loadVideo = async () => {
       try {
@@ -45,10 +55,10 @@ function VideoPlayer() {
         }
 
         const invoke = window.__TAURI_INVOKE__;
-        console.log('[VideoPlayer] Calling get_video_file command...');
+        console.log('[VideoPlayer] Calling get_video_file command for clip:', clip.id);
 
         const videoBytes = (await invoke('get_video_file', {
-          videoPath: videoPath
+          videoPath: clip.path
         })) as number[];
 
         console.log('[VideoPlayer] Received video bytes:', videoBytes.length);
@@ -58,26 +68,36 @@ function VideoPlayer() {
         const blob = new Blob([uint8Array], { type: 'video/mp4' });
         const blobUrl = URL.createObjectURL(blob);
 
-        console.log('[VideoPlayer] Created blob URL:', blobUrl);
+        console.log('[VideoPlayer] Created blob URL for clip:', clip.id, blobUrl);
         setVideoSrc(blobUrl);
+        setCurrentClipId(clip.id);
+
+        // Set video element's time to the correct position within this clip
+        if (videoRef.current) {
+          const timeInClip = currentTime - clip.startTimeInSequence;
+          videoRef.current.currentTime = Math.max(0, timeInClip);
+        }
       } catch (e) {
-        console.error('[VideoPlayer] Failed to load video file:', e);
+        console.error('[VideoPlayer] Failed to load video file for clip:', clip.id, e);
       }
     };
 
     loadVideo();
-  }, [videoPath]);
+  }, [clips, currentTime, getCurrentClip, currentClipId]);
 
-  // Log video source conversion with detailed path info
+  // Log video source changes
   useEffect(() => {
+    const clip = getCurrentClip();
     console.log('[VideoPlayer] Video source changed:', {
-      videoPath,
+      currentClipId,
+      clipPath: clip?.path,
       videoSrc,
       videoDuration,
       isPlaying,
-      isValidUrl: videoSrc ? videoSrc.startsWith('asset://') || videoSrc.startsWith('http') : false
+      currentTime,
+      isValidUrl: videoSrc ? videoSrc.startsWith('blob:') : false
     });
-  }, [videoPath, videoSrc, videoDuration, isPlaying]);
+  }, [currentClipId, videoSrc, videoDuration, isPlaying, currentTime, getCurrentClip]);
 
   // Sync video element with store
   useEffect(() => {
@@ -124,13 +144,17 @@ function VideoPlayer() {
   // Update video time when store changes (for seeking)
   useEffect(() => {
     const video = videoRef.current;
-    if (!video) return;
+    const clip = getCurrentClip();
+    if (!video || !clip) return;
+
+    // Calculate time within the current clip
+    const timeInClip = currentTime - clip.startTimeInSequence;
 
     // Only update if difference is significant (avoid feedback loop)
-    if (Math.abs(video.currentTime - currentTime) > 0.5) {
-      video.currentTime = currentTime;
+    if (Math.abs(video.currentTime - timeInClip) > 0.5) {
+      video.currentTime = Math.max(0, timeInClip);
     }
-  }, [currentTime]);
+  }, [currentTime, getCurrentClip]);
 
   // Update volume when store changes
   useEffect(() => {
@@ -142,20 +166,40 @@ function VideoPlayer() {
   // Handle video time updates
   const handleTimeUpdate = () => {
     const video = videoRef.current;
-    if (!video) return;
+    const clip = getCurrentClip();
+    if (!video || !clip) return;
 
-    setCurrentTime(video.currentTime);
+    // Convert video element's time (relative to clip) to sequence time (relative to entire timeline)
+    const sequenceTime = clip.startTimeInSequence + video.currentTime;
+    setCurrentTime(sequenceTime);
 
-    // Auto-pause at trim end point
-    if (trimEnd && video.currentTime >= trimEnd) {
-      video.pause();
-      setPlaying(false);
-      video.currentTime = trimEnd;
+    // Check if we've reached the end of this clip and need to move to the next one
+    const clipEndTime = clip.startTimeInSequence + (clip.duration || 0);
+    if (sequenceTime >= clipEndTime && isPlaying) {
+      // Find next clip
+      const currentClipIndex = clips.findIndex(c => c.id === clip.id);
+      if (currentClipIndex < clips.length - 1) {
+        // Move to start of next clip
+        const nextClip = clips[currentClipIndex + 1];
+        setCurrentTime(nextClip.startTimeInSequence);
+      } else {
+        // We're at the end of the last clip, pause playback
+        video.pause();
+        setPlaying(false);
+        setCurrentTime(clipEndTime);
+      }
     }
 
-    // Skip to trim start if playing before it
-    if (trimStart && video.currentTime < trimStart && isPlaying) {
-      video.currentTime = trimStart;
+    // Auto-pause at trim end point (global timeline trim)
+    if (trimEnd && sequenceTime >= trimEnd) {
+      video.pause();
+      setPlaying(false);
+      setCurrentTime(trimEnd);
+    }
+
+    // Skip to trim start if playing before it (global timeline trim)
+    if (trimStart && sequenceTime < trimStart && isPlaying) {
+      setCurrentTime(trimStart);
     }
   };
 
@@ -186,7 +230,7 @@ function VideoPlayer() {
     return `${mins}:${secs.toString().padStart(2, '0')}`;
   };
 
-  if (!videoSrc) {
+  if (!videoSrc || clips.length === 0) {
     return null; // No video loaded
   }
 
