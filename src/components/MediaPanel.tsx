@@ -161,7 +161,6 @@ function ClipCard({ clip, index, isActive, onRemove }: ClipCardProps) {
 function MediaPanel() {
   const clips = useVideoStore((state) => state.clips);
   const removeClip = useVideoStore((state) => state.removeClip);
-  const currentTime = useVideoStore((state) => state.currentTime);
   const getCurrentClip = useVideoStore((state) => state.getCurrentClip);
 
   const currentClip = getCurrentClip();

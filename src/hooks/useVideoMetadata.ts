@@ -1,11 +1,15 @@
 import { useEffect, useRef } from 'react';
 import { useVideoStore } from '../store/videoStore';
+import { ClipData } from '../types/clip';
+import { loadVideoBlob } from '../utils/videoLoader';
 
 declare const window: any;
 
 export function useVideoMetadata() {
   const clips = useVideoStore((state) => state.clips);
   const updateClipMetadata = useVideoStore((state) => state.updateClipMetadata);
+  const updateClipBlobUrl = useVideoStore((state) => state.updateClipBlobUrl);
+  const addTrack = useVideoStore((state) => state.addTrack);
 
   // Keep track of which clips we've already fetched metadata for
   const fetchedClipIds = useRef<Set<string>>(new Set());
@@ -72,6 +76,29 @@ export function useVideoMetadata() {
             duration,
             resolution
           });
+
+          // Load video blob and store the URL
+          console.log('[useVideoMetadata] Loading blob for clip:', clip.id);
+          const blobUrl = await loadVideoBlob(clip.id, clip.path);
+          if (blobUrl) {
+            updateClipBlobUrl(clip.id, blobUrl);
+            console.log('[useVideoMetadata] Blob loaded successfully for clip:', clip.id);
+          } else {
+            console.error('[useVideoMetadata] Failed to load blob for clip:', clip.id);
+          }
+
+          // Also create a track in the composite state
+          const clipData: ClipData = {
+            id: clip.id,
+            path: clip.path,
+            name: clip.name,
+            duration: duration * 1000, // Convert to milliseconds
+            width: resolution.width,
+            height: resolution.height
+          };
+
+          addTrack(clipData);
+          console.log('[useVideoMetadata] Track created for clip:', clip.id);
 
         } catch (error) {
           console.error('[useVideoMetadata] Failed to load metadata for clip:', clip.id, error);

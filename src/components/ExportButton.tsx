@@ -4,7 +4,11 @@ import { FileDownload } from '@mui/icons-material';
 import { useVideoStore } from '../store/videoStore';
 import ExportDialog from './ExportDialog';
 
-function ExportButton() {
+interface ExportButtonProps {
+  compositeMode?: boolean; // Whether we're in composite editing mode
+}
+
+function ExportButton({ compositeMode = false }: ExportButtonProps) {
   const [dialogOpen, setDialogOpen] = useState(false);
 
   const {
@@ -13,20 +17,30 @@ function ExportButton() {
     videoDuration,
     videoResolution,
     trimStart,
-    trimEnd
+    trimEnd,
+    composite
   } = useVideoStore();
 
-  // Can't export if no video or trim duration is zero
-  const canExport = videoPath && videoDuration && (trimEnd - trimStart) > 0;
+  // For composite mode: can export if there are visible tracks
+  // For sequential mode: can export if video exists and trim duration > 0
+  const canExport = compositeMode
+    ? composite.tracks.length > 0 && composite.tracks.some(t => t.isVisible)
+    : videoPath && videoDuration && (trimEnd - trimStart) > 0;
 
   const handleClick = () => {
     console.log('[ExportButton] Export button clicked');
+    console.log('[ExportButton] compositeMode:', compositeMode);
     console.log('[ExportButton] canExport:', canExport);
-    console.log('[ExportButton] videoPath:', videoPath);
-    console.log('[ExportButton] videoDuration:', videoDuration);
-    console.log('[ExportButton] trimStart:', trimStart);
-    console.log('[ExportButton] trimEnd:', trimEnd);
-    console.log('[ExportButton] trim duration:', trimEnd - trimStart);
+
+    if (compositeMode) {
+      console.log('[ExportButton] Tracks:', composite.tracks.length);
+      console.log('[ExportButton] Visible tracks:', composite.tracks.filter(t => t.isVisible).length);
+    } else {
+      console.log('[ExportButton] videoPath:', videoPath);
+      console.log('[ExportButton] videoDuration:', videoDuration);
+      console.log('[ExportButton] trimStart:', trimStart);
+      console.log('[ExportButton] trimEnd:', trimEnd);
+    }
 
     if (canExport) {
       console.log('[ExportButton] Opening export dialog');
@@ -47,17 +61,19 @@ function ExportButton() {
         Export
       </Button>
 
-      {videoPath && videoName && (
-        <ExportDialog
-          open={dialogOpen}
-          onClose={() => setDialogOpen(false)}
-          inputPath={videoPath}
-          trimStart={trimStart}
-          trimEnd={trimEnd}
-          videoName={videoName}
-          videoResolution={videoResolution || undefined}
-        />
-      )}
+      <ExportDialog
+        open={dialogOpen}
+        onClose={() => setDialogOpen(false)}
+        compositeMode={compositeMode}
+        // Sequential mode props
+        inputPath={videoPath}
+        trimStart={trimStart}
+        trimEnd={trimEnd}
+        videoName={videoName}
+        videoResolution={videoResolution || undefined}
+        // Composite mode props
+        tracks={compositeMode ? composite.tracks : []}
+      />
     </>
   );
 }

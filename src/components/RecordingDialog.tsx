@@ -21,7 +21,6 @@ import {
 } from '@mui/icons-material';
 import { invoke } from '@tauri-apps/api/core';
 import { useVideoStore } from '../store/videoStore';
-import { VideoResolution } from '../types/recording';
 import { useRecordingResolution } from '../hooks/useRecordingResolution';
 import PermissionHelper from './PermissionHelper';
 import CameraPreview from './CameraPreview';
@@ -244,7 +243,7 @@ function RecordingDialog({ open, onClose }: RecordingDialogProps) {
                   onChange={setSelectedResolution}
                   source={source}
                   sourceResolution={
-                    source === 'screen' ? screenResolution : cameraResolution
+                    source === 'screen' ? (screenResolution || undefined) : (cameraResolution || undefined)
                   }
                 />
               </Box>

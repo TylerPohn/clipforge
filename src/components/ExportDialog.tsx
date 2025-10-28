@@ -9,12 +9,13 @@ import {
   Typography,
   Box,
   Alert,
-  ToggleButtonGroup,
-  ToggleButton,
-  Stack
+  FormGroup,
+  FormControlLabel,
+  Checkbox
 } from '@mui/material';
 import { CheckCircle, Error as ErrorIcon } from '@mui/icons-material';
 import { VideoResolution, RESOLUTION_OPTIONS } from '../types/recording';
+import { Track } from '../types/clip';
 import ResolutionSelector from './ResolutionSelector';
 
 declare const window: any;
@@ -22,27 +23,44 @@ declare const window: any;
 interface ExportDialogProps {
   open: boolean;
   onClose: () => void;
-  inputPath: string;
-  trimStart: number;
-  trimEnd: number;
-  videoName: string;
+  compositeMode?: boolean;
+  // Sequential mode props
+  inputPath?: string | null;
+  trimStart?: number;
+  trimEnd?: number;
+  videoName?: string | null;
   videoResolution?: { width: number; height: number };
+  // Composite mode props
+  tracks?: Track[];
 }
 
 function ExportDialog({
   open,
   onClose,
+  compositeMode = false,
   inputPath,
-  trimStart,
-  trimEnd,
+  trimStart = 0,
+  trimEnd = 0,
   videoName,
-  videoResolution
+  videoResolution,
+  tracks = []
 }: ExportDialogProps) {
   const [status, setStatus] = useState<'idle' | 'exporting' | 'success' | 'error'>('idle');
   const [progress, setProgress] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [outputPath, setOutputPath] = useState<string | null>(null);
   const [selectedResolution, setSelectedResolution] = useState<VideoResolution>(VideoResolution['720P']);
+  const [selectedTrackIds, setSelectedTrackIds] = useState<Set<string>>(new Set());
+
+  // Initialize selected tracks with visible tracks when dialog opens
+  useEffect(() => {
+    if (open && compositeMode && tracks.length > 0) {
+      const visibleTrackIds = new Set(
+        tracks.filter(t => t.isVisible).map(t => t.id)
+      );
+      setSelectedTrackIds(visibleTrackIds);
+    }
+  }, [open, compositeMode, tracks]);
 
   // Listen for FFmpeg progress events
   useEffect(() => {
@@ -78,6 +96,7 @@ function ExportDialog({
   // Start export
   const handleExport = async () => {
     console.log('[ExportDialog] Starting export...');
+    console.log('[ExportDialog] compositeMode:', compositeMode);
     setStatus('exporting');
     setProgress(0);
     setError(null);
@@ -90,8 +109,10 @@ function ExportDialog({
       const invoke = window.__TAURI_INVOKE__;
       console.log('[ExportDialog] Tauri context available');
 
-      // Prompt user for save location
-      const defaultName = videoName.replace(/\.(mp4|mov)$/i, '_trimmed.mp4');
+      // Determine default filename
+      const defaultName = compositeMode
+        ? 'composite_export.mp4'
+        : (videoName || 'export').replace(/\.(mp4|mov)$/i, '_trimmed.mp4');
       console.log('[ExportDialog] Opening save dialog with default name:', defaultName);
 
       const savePath = (await invoke('save_file_dialog', {
@@ -110,33 +131,88 @@ function ExportDialog({
       const finalOutputPath = savePath.endsWith('.mp4') ? savePath : `${savePath}.mp4`;
       console.log('[ExportDialog] Final output path:', finalOutputPath);
 
-      // Call Rust trim command with export options
-      const exportOptions = {
-        resolution: selectedResolution,
-        source_width: videoResolution?.width,
-        source_height: videoResolution?.height,
-      };
+      if (compositeMode) {
+        // Composite export
+        const selectedTracks = tracks.filter(t => selectedTrackIds.has(t.id));
 
-      console.log('[ExportDialog] Calling trim_video with:', {
-        inputPath,
-        outputPath: finalOutputPath,
-        startTime: trimStart,
-        endTime: trimEnd,
-        exportOptions
-      });
+        if (selectedTracks.length === 0) {
+          throw new Error('No tracks selected for export');
+        }
 
-      const result = (await invoke('trim_video', {
-        inputPath,
-        outputPath: finalOutputPath,
-        startTime: trimStart,
-        endTime: trimEnd,
-        exportOptions
-      })) as string;
+        console.log('[ExportDialog] Exporting', selectedTracks.length, 'tracks');
 
-      console.log('[ExportDialog] trim_video completed:', result);
-      setOutputPath(result);
-      setStatus('success');
-      setProgress(100);
+        // Determine canvas size (use largest track dimensions)
+        const canvasWidth = Math.max(...selectedTracks.map(t => t.clipData.width));
+        const canvasHeight = Math.max(...selectedTracks.map(t => t.clipData.height));
+
+        // Prepare track data for Rust
+        const trackData = selectedTracks.map(t => ({
+          path: t.clipData.path,
+          position_x: t.position.x,
+          position_y: t.position.y,
+          volume: t.volume,
+          opacity: t.opacity,
+          width: t.clipData.width,
+          height: t.clipData.height,
+          z_index: t.zIndex
+        }));
+
+        const exportOptions = {
+          resolution: selectedResolution,
+          source_width: canvasWidth,
+          source_height: canvasHeight
+        };
+
+        console.log('[ExportDialog] Calling export_composite_video with:', {
+          outputPath: finalOutputPath,
+          tracks: trackData,
+          canvasWidth,
+          canvasHeight,
+          exportOptions
+        });
+
+        const result = (await invoke('export_composite_video', {
+          outputPath: finalOutputPath,
+          tracks: trackData,
+          canvasWidth,
+          canvasHeight,
+          exportOptions
+        })) as string;
+
+        console.log('[ExportDialog] export_composite_video completed:', result);
+        setOutputPath(result);
+        setStatus('success');
+        setProgress(100);
+
+      } else {
+        // Sequential export (existing logic)
+        const exportOptions = {
+          resolution: selectedResolution,
+          source_width: videoResolution?.width,
+          source_height: videoResolution?.height,
+        };
+
+        console.log('[ExportDialog] Calling trim_video with:', {
+          inputPath,
+          outputPath: finalOutputPath,
+          startTime: trimStart,
+          endTime: trimEnd,
+          exportOptions
+        });
+
+        const result = (await invoke('trim_video', {
+          inputPath,
+          outputPath: finalOutputPath,
+          startTime: trimStart,
+          endTime: trimEnd,
+          exportOptions
+        })) as string;
+
+        console.log('[ExportDialog] trim_video completed:', result);
+        setOutputPath(result);
+        setStatus('success');
+        setProgress(100);
+      }
 
     } catch (err: any) {
       console.error('[ExportDialog] Export failed:', err);
@@ -195,6 +271,44 @@ function ExportDialog({
             <Typography variant="subtitle2" gutterBottom>
               Export Settings
             </Typography>
+
+            {compositeMode && tracks.length > 0 && (
+              <Box sx={{ mb: 3 }}>
+                <Typography variant="body2" gutterBottom>
+                  Select tracks to export:
+                </Typography>
+                <FormGroup>
+                  {tracks.map(track => (
+                    <FormControlLabel
+                      key={track.id}
+                      control={
+                        <Checkbox
+                          checked={selectedTrackIds.has(track.id)}
+                          onChange={(e) => {
+                            const newSelection = new Set(selectedTrackIds);
+                            if (e.target.checked) {
+                              newSelection.add(track.id);
+                            } else {
+                              newSelection.delete(track.id);
+                            }
+                            setSelectedTrackIds(newSelection);
+                          }}
+                        />
+                      }
+                      label={
+                        <Typography variant="body2">
+                          {track.name} {!track.isVisible && '(hidden)'}
+                        </Typography>
+                      }
+                    />
+                  ))}
+                </FormGroup>
+                <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 1 }}>
+                  {selectedTrackIds.size} {selectedTrackIds.size === 1 ? 'track' : 'tracks'} selected
+                </Typography>
+              </Box>
+            )}
+
             <Box sx={{ mb: 3, mt: 2 }}>
               <ResolutionSelector
                 value={selectedResolution}
@@ -203,9 +317,12 @@ function ExportDialog({
                 sourceResolution={videoResolution}
               />
             </Box>
-            <Typography variant="caption" color="text.secondary" display="block">
-              Video will be trimmed from {trimStart.toFixed(1)}s to {trimEnd.toFixed(1)}s
-            </Typography>
+
+            {!compositeMode && (
+              <Typography variant="caption" color="text.secondary" display="block">
+                Video will be trimmed from {trimStart.toFixed(1)}s to {trimEnd.toFixed(1)}s
+              </Typography>
+            )}
           </Box>
         )}
 

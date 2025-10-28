@@ -11,7 +11,6 @@ interface ResolutionSelectorProps {
 export function ResolutionSelector({
   value,
   onChange,
-  source,
   sourceResolution
 }: ResolutionSelectorProps) {
   const getDisplayResolution = (resolution: VideoResolution): string => {

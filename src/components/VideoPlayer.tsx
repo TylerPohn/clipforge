@@ -40,50 +40,46 @@ function VideoPlayer() {
       return;
     }
 
-    // Only load new video if we've switched to a different clip
+    // Only switch video if we've moved to a different clip
     if (clip.id === currentClipId) {
       return;
     }
 
-    console.log('[VideoPlayer] Loading clip:', { id: clip.id, path: clip.path });
+    console.log('[VideoPlayer] Switching to clip:', { id: clip.id, path: clip.path, hasBlobUrl: !!clip.blobUrl });
 
-    const loadVideo = async () => {
-      try {
-        if (!window.__TAURI_INVOKE__) {
-          console.error('[VideoPlayer] Tauri invoke not available');
-          return;
-        }
+    // Use pre-loaded blob URL
+    if (clip.blobUrl) {
+      setVideoSrc(clip.blobUrl);
+      setCurrentClipId(clip.id);
+    } else {
+      console.warn('[VideoPlayer] Clip does not have a blob URL yet:', clip.id);
+      // Wait for blob to be loaded by useVideoMetadata
+    }
+  }, [clips, currentTime, getCurrentClip, currentClipId]);
 
-        const invoke = window.__TAURI_INVOKE__;
-        console.log('[VideoPlayer] Calling get_video_file command for clip:', clip.id);
+  // Load new video and set time when videoSrc changes
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video || !videoSrc) return;
 
-        const videoBytes = (await invoke('get_video_file', {
-          videoPath: clip.path
-        })) as number[];
+    console.log('[VideoPlayer] Loading new video source:', videoSrc);
 
-        console.log('[VideoPlayer] Received video bytes:', videoBytes.length);
+    // Force the video to load the new source
+    video.load();
 
-        // Convert to Uint8Array and create blob
-        const uint8Array = new Uint8Array(videoBytes);
-        const blob = new Blob([uint8Array], { type: 'video/mp4' });
-        const blobUrl = URL.createObjectURL(blob);
+    // Set the correct time within the clip once metadata is loaded
+    const handleLoadedMetadata = () => {
+      const clip = getCurrentClip();
+      if (!clip) return;
 
-        console.log('[VideoPlayer] Created blob URL for clip:', clip.id, blobUrl);
-        setVideoSrc(blobUrl);
-        setCurrentClipId(clip.id);
-
-        // Set video element's time to the correct position within this clip
-        if (videoRef.current) {
-          const timeInClip = currentTime - clip.startTimeInSequence;
-          videoRef.current.currentTime = Math.max(0, timeInClip);
-        }
-      } catch (e) {
-        console.error('[VideoPlayer] Failed to load video file for clip:', clip.id, e);
-      }
+      const timeInClip = currentTime - clip.startTimeInSequence;
+      video.currentTime = Math.max(0, timeInClip);
+      console.log('[VideoPlayer] Set video time to:', video.currentTime, 'for clip:', clip.id);
     };
 
-    loadVideo();
-  }, [clips, currentTime, getCurrentClip, currentClipId]);
+    video.addEventListener('loadedmetadata', handleLoadedMetadata);
+    return () => video.removeEventListener('loadedmetadata', handleLoadedMetadata);
+  }, [videoSrc]);
 
   // Log video source changes
   useEffect(() => {
@@ -255,6 +251,7 @@ function VideoPlayer() {
       }}>
         <video
           ref={videoRef}
+          src={videoSrc || undefined}
           onTimeUpdate={handleTimeUpdate}
           onEnded={() => setPlaying(false)}
           onLoadedMetadata={() => {
@@ -291,11 +288,7 @@ function VideoPlayer() {
             maxHeight: '100%',
             objectFit: 'contain'
           }}
-        >
-          {videoSrc && (
-            <source src={videoSrc} type="video/mp4" />
-          )}
-        </video>
+        />
 
         {/* Play/Pause Overlay (shows when paused) */}
         {!isPlaying && (

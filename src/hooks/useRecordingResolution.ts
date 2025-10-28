@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import { VideoResolution, ScreenResolution, CameraCapabilities } from '../types/recording';
+import { ScreenResolution, CameraCapabilities } from '../types/recording';
 
 interface RecordingResolution {
   width: number;
@@ -25,8 +25,8 @@ export function useRecordingResolution(source: 'screen' | 'camera') {
         } else {
           const caps = await invoke<CameraCapabilities>('get_camera_capabilities');
           setSourceResolution({
-            width: caps.native_width,
-            height: caps.native_height
+            width: caps.nativeWidth,
+            height: caps.nativeHeight
           });
         }
         setError(null);

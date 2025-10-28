@@ -48,27 +48,88 @@ export function useVideoThumbnail(videoPath: string | null): string | null {
         await new Promise<void>((resolve, reject) => {
           if (!videoElement) return reject(new Error('Video element not created'));
 
-          videoElement.onloadedmetadata = () => resolve();
-          videoElement.onerror = (e) => {
-            console.error('[useVideoThumbnail] Video load error:', e);
-            reject(new Error('Failed to load video'));
+          const onLoadedMetadata = () => {
+            videoElement?.removeEventListener('loadedmetadata', onLoadedMetadata);
+            videoElement?.removeEventListener('error', onLoadError);
+            resolve();
           };
+
+          const onLoadError = (e: Event) => {
+            videoElement?.removeEventListener('loadedmetadata', onLoadedMetadata);
+            videoElement?.removeEventListener('error', onLoadError);
+            console.error('[useVideoThumbnail] Video load error:', e);
+            reject(new Error('Failed to load video metadata'));
+          };
+
+          videoElement.addEventListener('loadedmetadata', onLoadedMetadata, { once: true });
+          videoElement.addEventListener('error', onLoadError, { once: true });
           videoElement.src = blobUrl!;
+        });
+
+        // Wait for video to be playable before seeking
+        await new Promise<void>((resolve, reject) => {
+          if (!videoElement) return reject(new Error('Video element not created'));
+
+          const onCanPlay = () => {
+            videoElement?.removeEventListener('canplay', onCanPlay);
+            videoElement?.removeEventListener('error', onCanPlayError);
+            resolve();
+          };
+
+          const onCanPlayError = (e: Event) => {
+            videoElement?.removeEventListener('canplay', onCanPlay);
+            videoElement?.removeEventListener('error', onCanPlayError);
+            console.error('[useVideoThumbnail] Video canplay error:', e);
+            reject(new Error('Video not ready for playback'));
+          };
+
+          if (videoElement.readyState >= 2) {
+            // Already in canplay or better state
+            resolve();
+          } else {
+            videoElement.addEventListener('canplay', onCanPlay, { once: true });
+            videoElement.addEventListener('error', onCanPlayError, { once: true });
+          }
         });
 
         // Seek to 1 second or 10% of duration, whichever is smaller
         const seekTime = Math.min(1, videoElement.duration * 0.1);
-        videoElement.currentTime = seekTime;
 
-        // Wait for the seek to complete
+        // Wait for the seek to complete with timeout fallback
+        let seekTimeout: NodeJS.Timeout | null = null;
         await new Promise<void>((resolve, reject) => {
           if (!videoElement) return reject(new Error('Video element not created'));
 
-          videoElement.onseeked = () => resolve();
-          videoElement.onerror = (e) => {
+          const onSeeked = () => {
+            if (seekTimeout) clearTimeout(seekTimeout);
+            videoElement?.removeEventListener('seeked', onSeeked);
+            videoElement?.removeEventListener('error', onSeekError);
+            resolve();
+          };
+
+          const onSeekError = (e: Event) => {
+            if (seekTimeout) clearTimeout(seekTimeout);
+            videoElement?.removeEventListener('seeked', onSeeked);
+            videoElement?.removeEventListener('error', onSeekError);
             console.error('[useVideoThumbnail] Video seek error:', e);
             reject(new Error('Failed to seek video'));
           };
+
+          // Set up event listeners BEFORE seeking to prevent race conditions
+          videoElement.addEventListener('seeked', onSeeked, { once: true });
+          videoElement.addEventListener('error', onSeekError, { once: true });
+
+          // Fallback timeout: if seek doesn't complete in 3 seconds, proceed anyway
+          // Some containers don't reliably fire seeked events
+          seekTimeout = setTimeout(() => {
+            videoElement?.removeEventListener('seeked', onSeeked);
+            videoElement?.removeEventListener('error', onSeekError);
+            console.warn('[useVideoThumbnail] Seek timeout - proceeding with current frame');
+            resolve();
+          }, 3000);
+
+          // Now set currentTime to trigger seek
+          videoElement.currentTime = seekTime;
         });
 
         // Create canvas and draw the current frame

@@ -47,6 +47,27 @@ struct ExportOptions {
     source_height: Option<i32>,
 }
 
+#[derive(Debug, Deserialize, Clone)]
+struct TrackExportData {
+    path: String,
+    position_x: i32,
+    position_y: i32,
+    volume: f64,      // 0.0 to 1.0
+    opacity: f64,     // 0.0 to 1.0
+    width: i32,
+    height: i32,
+    z_index: i32,
+}
+
+#[derive(Debug, Deserialize)]
+struct CompositeExportOptions {
+    resolution: Option<String>,
+    #[serde(default)]
+    source_width: Option<i32>,
+    #[serde(default)]
+    source_height: Option<i32>,
+}
+
 #[tauri::command]
 async fn trim_video(
     input_path: String,
@@ -247,6 +268,21 @@ fn get_video_file(video_path: &str) -> Result<Vec<u8>, String> {
     use std::fs;
     fs::read(video_path)
         .map_err(|e| format!("Failed to read video file: {}", e))
+}
+
+#[tauri::command]
+fn get_video_file_path(video_path: String) -> Result<String, String> {
+    // Validate path exists
+    let path = std::path::Path::new(&video_path);
+    if !path.exists() {
+        return Err(format!("Video file not found: {}", video_path));
+    }
+
+    // Return absolute path
+    match path.canonicalize() {
+        Ok(canonical_path) => Ok(canonical_path.to_string_lossy().to_string()),
+        Err(e) => Err(format!("Failed to resolve path: {}", e))
+    }
 }
 
 #[tauri::command]
@@ -551,9 +587,245 @@ fn delete_file(path: String) -> Result<String, String> {
     Ok("File deleted".to_string())
 }
 
+#[tauri::command]
+async fn export_composite_video(
+    output_path: String,
+    tracks: Vec<TrackExportData>,
+    canvas_width: i32,
+    canvas_height: i32,
+    export_options: Option<CompositeExportOptions>,
+    _window: tauri::Window
+) -> Result<String, String> {
+    println!("[export_composite_video] Starting composite export");
+    println!("[export_composite_video] Output: {}", output_path);
+    println!("[export_composite_video] Canvas size: {}x{}", canvas_width, canvas_height);
+    println!("[export_composite_video] Tracks: {}", tracks.len());
+
+    if tracks.is_empty() {
+        return Err("No tracks to export".to_string());
+    }
+
+    // Parse export options
+    let opts = export_options.unwrap_or_else(|| CompositeExportOptions {
+        resolution: Some("source".to_string()),
+        source_width: Some(canvas_width),
+        source_height: Some(canvas_height),
+    });
+
+    // Determine output resolution and bitrate
+    let (output_width, output_height, bitrate) = match opts.resolution.as_deref() {
+        Some("720p") => {
+            println!("[export_composite_video] Exporting at 720p resolution");
+            (1280, 720, "2500k")
+        }
+        Some("1080p") => {
+            println!("[export_composite_video] Exporting at 1080p resolution");
+            (1920, 1080, "5000k")
+        }
+        Some("source") | None => {
+            println!("[export_composite_video] Exporting at source resolution");
+            (canvas_width, canvas_height, "8000k")
+        }
+        Some(res) => {
+            return Err(format!("Invalid resolution: {}", res));
+        }
+    };
+
+    // Sort tracks by z-index (lower first, so they appear at bottom)
+    let mut sorted_tracks = tracks.clone();
+    sorted_tracks.sort_by_key(|t| t.z_index);
+
+    // Build FFmpeg filter graph
+    let mut filter_parts = Vec::new();
+    let mut overlay_chain = String::new();
+
+    // Create a black background canvas
+    filter_parts.push(format!(
+        "color=c=black:s={}x{}:d=30[bg]",
+        output_width, output_height
+    ));
+
+    // Process each video track
+    for (i, track) in sorted_tracks.iter().enumerate() {
+        // Scale video to fit output resolution while maintaining aspect ratio
+        let scale_x = output_width as f64 / canvas_width as f64;
+        let scale_y = output_height as f64 / canvas_height as f64;
+
+        let scaled_width = (track.width as f64 * scale_x) as i32;
+        let scaled_height = (track.height as f64 * scale_y) as i32;
+        let scaled_x = (track.position_x as f64 * scale_x + output_width as f64 / 2.0 - scaled_width as f64 / 2.0) as i32;
+        let scaled_y = (track.position_y as f64 * scale_y + output_height as f64 / 2.0 - scaled_height as f64 / 2.0) as i32;
+
+        // Video filter: scale, apply opacity
+        filter_parts.push(format!(
+            "[{}:v]scale={}:{},format=yuva420p,colorchannelmixer=aa={}[v{}]",
+            i, scaled_width, scaled_height, track.opacity, i
+        ));
+
+        // Audio filter: apply volume
+        filter_parts.push(format!(
+            "[{}:a]volume={}[a{}]",
+            i, track.volume, i
+        ));
+
+        // Build overlay chain
+        if i == 0 {
+            overlay_chain = format!(
+                "[bg][v{}]overlay=x={}:y={}[tmp{}]",
+                i, scaled_x, scaled_y, i
+            );
+        } else if i == sorted_tracks.len() - 1 {
+            // Last overlay outputs to [vout]
+            overlay_chain.push_str(&format!(
+                ";[tmp{}][v{}]overlay=x={}:y={}[vout]",
+                i - 1, i, scaled_x, scaled_y
+            ));
+        } else {
+            overlay_chain.push_str(&format!(
+                ";[tmp{}][v{}]overlay=x={}:y={}[tmp{}]",
+                i - 1, i, scaled_x, scaled_y, i
+            ));
+        }
+    }
+
+    // Handle single track case
+    if sorted_tracks.len() == 1 {
+        overlay_chain = format!(
+            "[bg][v0]overlay=x={}:y={}[vout]",
+            (sorted_tracks[0].position_x as f64 * output_width as f64 / canvas_width as f64 + output_width as f64 / 2.0 - (sorted_tracks[0].width as f64 * output_width as f64 / canvas_width as f64) / 2.0) as i32,
+            (sorted_tracks[0].position_y as f64 * output_height as f64 / canvas_height as f64 + output_height as f64 / 2.0 - (sorted_tracks[0].height as f64 * output_height as f64 / canvas_height as f64) / 2.0) as i32
+        );
+    }
+
+    // Build audio mix
+    let audio_inputs: Vec<String> = (0..sorted_tracks.len()).map(|i| format!("[a{}]", i)).collect();
+    let audio_mix = if sorted_tracks.len() > 1 {
+        format!(
+            ";{}amix=inputs={}:duration=longest[aout]",
+            audio_inputs.join(""),
+            sorted_tracks.len()
+        )
+    } else {
+        ";[a0]anull[aout]".to_string()
+    };
+
+    // Combine all filter parts
+    let complete_filter = format!(
+        "{};{}{}",
+        filter_parts.join(";"),
+        overlay_chain,
+        audio_mix
+    );
+
+    println!("[export_composite_video] Filter graph: {}", complete_filter);
+
+    // Build FFmpeg command
+    let mut args = vec!["-y".to_string()];
+
+    // Add input files
+    for track in &sorted_tracks {
+        args.push("-i".to_string());
+        args.push(track.path.clone());
+    }
+
+    // Add filter complex
+    args.push("-filter_complex".to_string());
+    args.push(complete_filter);
+
+    // Map output streams
+    args.push("-map".to_string());
+    args.push("[vout]".to_string());
+    args.push("-map".to_string());
+    args.push("[aout]".to_string());
+
+    // Encoding options
+    args.push("-c:v".to_string());
+    args.push("libx264".to_string());
+    args.push("-preset".to_string());
+    args.push("fast".to_string());
+    args.push("-b:v".to_string());
+    args.push(bitrate.to_string());
+    args.push("-c:a".to_string());
+    args.push("aac".to_string());
+    args.push("-b:a".to_string());
+    args.push("192k".to_string());
+    args.push("-pix_fmt".to_string());
+    args.push("yuv420p".to_string());
+
+    args.push(output_path.clone());
+
+    println!("[export_composite_video] FFmpeg args: {:?}", args);
+
+    // Execute FFmpeg
+    let mut child = Command::new("ffmpeg")
+        .args(&args)
+        .spawn()
+        .map_err(|e| {
+            let err_msg = format!("Failed to start FFmpeg: {}", e);
+            println!("[export_composite_video] ERROR: {}", err_msg);
+            err_msg
+        })?;
+
+    println!("[export_composite_video] Waiting for FFmpeg to complete...");
+    let status = tokio::task::spawn_blocking(move || child.wait())
+        .await
+        .map_err(|e| {
+            let err_msg = format!("Task join error: {}", e);
+            println!("[export_composite_video] ERROR: {}", err_msg);
+            err_msg
+        })?
+        .map_err(|e| {
+            let err_msg = format!("Failed to wait for FFmpeg: {}", e);
+            println!("[export_composite_video] ERROR: {}", err_msg);
+            err_msg
+        })?;
+
+    if status.success() {
+        println!("[export_composite_video] FFmpeg completed successfully!");
+        println!("[export_composite_video] Output file: {}", output_path);
+        Ok(output_path)
+    } else {
+        let err_msg = format!("FFmpeg exited with status: {}", status);
+        println!("[export_composite_video] ERROR: {}", err_msg);
+        Err(err_msg)
+    }
+}
+
+// No longer needed - protocol registration moved to builder
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .register_uri_scheme_protocol("video", |_app, request| {
+            // Extract and URL-decode file path from URL
+            let encoded_path = request.uri().path().trim_start_matches('/');
+
+            // URL decode the path (e.g., %2F -> /)
+            let path = urlencoding::decode(encoded_path)
+                .unwrap_or_else(|_| std::borrow::Cow::Borrowed(encoded_path))
+                .to_string();
+
+            println!("[video_protocol] Encoded path: {}", encoded_path);
+            println!("[video_protocol] Decoded path: {}", path);
+
+            // Read file
+            match std::fs::read(&path) {
+                Ok(data) => {
+                    tauri::http::Response::builder()
+                        .header("Content-Type", "video/mp4")
+                        .header("Accept-Ranges", "bytes")
+                        .body(data)
+                        .unwrap()
+                },
+                Err(e) => {
+                    println!("[video_protocol] Error reading file: {}", e);
+                    tauri::http::Response::builder()
+                        .status(404)
+                        .body(format!("File not found: {}", e).into_bytes())
+                        .unwrap()
+                }
+            }
+        })
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
@@ -561,6 +833,7 @@ pub fn run() {
             open_file_dialog,
             get_video_metadata,
             get_video_file,
+            get_video_file_path,
             trim_video,
             save_file_dialog,
             start_screen_recording,
@@ -572,7 +845,8 @@ pub fn run() {
             get_screen_resolution,
             get_camera_capabilities,
             move_file,
-            delete_file
+            delete_file,
+            export_composite_video
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
