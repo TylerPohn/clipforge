@@ -1,16 +1,18 @@
 import { Box, Typography, Paper, IconButton, Stack, Chip } from '@mui/material';
-import { Delete, DragIndicator } from '@mui/icons-material';
+import { Delete, ArrowBack, ArrowForward } from '@mui/icons-material';
 import { useVideoStore, Clip } from '../store/videoStore';
 import { useVideoThumbnail } from '../hooks/useVideoThumbnail';
 
 interface ClipCardProps {
   clip: Clip;
   index: number;
+  totalClips: number;
   isActive: boolean;
   onRemove: (id: string) => void;
+  onReorder: (clipId: string, newIndex: number) => void;
 }
 
-function ClipCard({ clip, index, isActive, onRemove }: ClipCardProps) {
+function ClipCard({ clip, index, totalClips, isActive, onRemove, onReorder }: ClipCardProps) {
   const thumbnailUrl = useVideoThumbnail(clip.path);
 
   const formatDuration = (seconds: number | null) => {
@@ -18,6 +20,20 @@ function ClipCard({ clip, index, isActive, onRemove }: ClipCardProps) {
     const mins = Math.floor(seconds / 60);
     const secs = Math.floor(seconds % 60);
     return `${mins}:${secs.toString().padStart(2, '0')}`;
+  };
+
+  const handleMoveBack = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (index > 0) {
+      onReorder(clip.id, index - 1);
+    }
+  };
+
+  const handleMoveForward = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (index < totalClips - 1) {
+      onReorder(clip.id, index + 1);
+    }
   };
 
   return (
@@ -28,27 +44,61 @@ function ClipCard({ clip, index, isActive, onRemove }: ClipCardProps) {
         width: 160,
         height: 120,
         position: 'relative',
-        cursor: 'pointer',
         transition: 'all 0.2s',
         border: isActive ? '2px solid #00bcd4' : '2px solid transparent',
         '&:hover': {
           elevation: 4,
           borderColor: isActive ? '#00bcd4' : 'rgba(255, 255, 255, 0.2)',
-        }
+        },
+        userSelect: 'none' // Prevent text selection
       }}
     >
-      {/* Drag handle */}
-      <Box sx={{
-        position: 'absolute',
-        top: 4,
-        left: 4,
-        cursor: 'grab',
-        opacity: 0.5,
-        zIndex: 10,
-        '&:hover': { opacity: 1 }
-      }}>
-        <DragIndicator fontSize="small" />
-      </Box>
+      {/* Reorder arrows */}
+      <Stack
+        direction="row"
+        spacing={0.5}
+        sx={{
+          position: 'absolute',
+          top: 4,
+          left: 4,
+          zIndex: 10,
+        }}
+      >
+        <IconButton
+          size="small"
+          onClick={handleMoveBack}
+          disabled={index === 0}
+          sx={{
+            p: 0.25,
+            backgroundColor: 'rgba(0, 0, 0, 0.6)',
+            color: 'white',
+            '&:hover': { backgroundColor: 'rgba(0, 0, 0, 0.8)' },
+            '&.Mui-disabled': {
+              backgroundColor: 'rgba(0, 0, 0, 0.3)',
+              color: 'rgba(255, 255, 255, 0.3)'
+            }
+          }}
+        >
+          <ArrowBack fontSize="small" />
+        </IconButton>
+        <IconButton
+          size="small"
+          onClick={handleMoveForward}
+          disabled={index === totalClips - 1}
+          sx={{
+            p: 0.25,
+            backgroundColor: 'rgba(0, 0, 0, 0.6)',
+            color: 'white',
+            '&:hover': { backgroundColor: 'rgba(0, 0, 0, 0.8)' },
+            '&.Mui-disabled': {
+              backgroundColor: 'rgba(0, 0, 0, 0.3)',
+              color: 'rgba(255, 255, 255, 0.3)'
+            }
+          }}
+        >
+          <ArrowForward fontSize="small" />
+        </IconButton>
+      </Stack>
 
       {/* Clip number badge */}
       <Chip
@@ -161,6 +211,7 @@ function ClipCard({ clip, index, isActive, onRemove }: ClipCardProps) {
 function MediaPanel() {
   const clips = useVideoStore((state) => state.clips);
   const removeClip = useVideoStore((state) => state.removeClip);
+  const reorderClip = useVideoStore((state) => state.reorderClip);
   const getCurrentClip = useVideoStore((state) => state.getCurrentClip);
 
   const currentClip = getCurrentClip();
@@ -211,8 +262,10 @@ function MediaPanel() {
             key={clip.id}
             clip={clip}
             index={index}
+            totalClips={clips.length}
             isActive={currentClip?.id === clip.id}
             onRemove={removeClip}
+            onReorder={reorderClip}
           />
         ))}
       </Box>

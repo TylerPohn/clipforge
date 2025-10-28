@@ -51,6 +51,7 @@ interface VideoState {
   updateClipMetadata: (clipId: string, duration: number, resolution: { width: number; height: number }) => void;
   updateClipBlobUrl: (clipId: string, blobUrl: string) => void;
   removeClip: (clipId: string) => void;
+  reorderClip: (clipId: string, newIndex: number) => void;
   clearAllClips: () => void;
   getCurrentClip: () => Clip | null;
 
@@ -238,6 +239,32 @@ export const useVideoStore = create<VideoState>((set, get) => ({
       trimStart: 0,
       trimEnd: totalDuration
     });
+  },
+
+  reorderClip: (clipId, newIndex) => {
+    const state = get();
+    const oldIndex = state.clips.findIndex(c => c.id === clipId);
+
+    if (oldIndex === -1) {
+      console.error('[VideoStore] Clip not found:', clipId);
+      return;
+    }
+
+    if (oldIndex === newIndex) {
+      return; // No change needed
+    }
+
+    // Create a new array with the clip moved to the new position
+    const updatedClips = [...state.clips];
+    const [movedClip] = updatedClips.splice(oldIndex, 1);
+    updatedClips.splice(newIndex, 0, movedClip);
+
+    // Recalculate start times since clip order changed
+    const recalculatedClips = recalculateStartTimes(updatedClips);
+
+    console.log('[VideoStore] Reordering clip:', { clipId, oldIndex, newIndex });
+
+    set({ clips: recalculatedClips });
   },
 
   clearAllClips: () => {
