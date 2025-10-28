@@ -33,8 +33,6 @@ interface VideoState {
   videoName: string | null;
   videoDuration: number | null;  // Total duration of all clips combined
   videoResolution: { width: number; height: number } | null;
-  trimStart: number;
-  trimEnd: number;
 
   // Playback state
   isPlaying: boolean;
@@ -50,6 +48,8 @@ interface VideoState {
   addClip: (path: string, name: string) => string; // Returns clip ID
   updateClipMetadata: (clipId: string, duration: number, resolution: { width: number; height: number }) => void;
   updateClipBlobUrl: (clipId: string, blobUrl: string) => void;
+  updateClipTrim: (clipId: string, trimStart: number, trimEnd: number) => void;
+  resetClipTrim: (clipId: string) => void;
   removeClip: (clipId: string) => void;
   reorderClip: (clipId: string, newIndex: number) => void;
   clearAllClips: () => void;
@@ -77,7 +77,6 @@ interface VideoState {
   // Legacy methods (kept for backward compatibility, now internally use clips)
   setVideo: (path: string, name: string) => void;
   setMetadata: (duration: number, resolution: { width: number; height: number }) => void;
-  setTrimPoints: (start: number, end: number) => void;
   clearVideo: () => void;
 
   // Playback methods
@@ -91,19 +90,22 @@ interface VideoState {
   setCameraSourceResolution: (resolution: { width: number; height: number } | undefined) => void;
 }
 
-// Helper function to calculate total duration
+// Helper function to calculate total duration (using trimmed durations)
 const calculateTotalDuration = (clips: Clip[]): number => {
   if (clips.length === 0) return 0;
   const lastClip = clips[clips.length - 1];
-  return lastClip.startTimeInSequence + (lastClip.duration || 0);
+  const trimmedDuration = lastClip.duration !== null ? (lastClip.trimEnd - lastClip.trimStart) : 0;
+  return lastClip.startTimeInSequence + trimmedDuration;
 };
 
-// Helper function to recalculate start times in sequence
+// Helper function to recalculate start times in sequence (using trimmed durations)
 const recalculateStartTimes = (clips: Clip[]): Clip[] => {
   let currentTime = 0;
   return clips.map(clip => {
     const updatedClip = { ...clip, startTimeInSequence: currentTime };
-    currentTime += (clip.duration || 0);
+    // Use trimmed duration instead of full duration
+    const trimmedDuration = clip.duration !== null ? (clip.trimEnd - clip.trimStart) : 0;
+    currentTime += trimmedDuration;
     return updatedClip;
   });
 };
@@ -122,8 +124,6 @@ export const useVideoStore = create<VideoState>((set, get) => ({
   videoName: null,
   videoDuration: null,
   videoResolution: null,
-  trimStart: 0,
-  trimEnd: 0,
   isPlaying: false,
   currentTime: 0,
   volume: 1.0,
@@ -189,9 +189,7 @@ export const useVideoStore = create<VideoState>((set, get) => ({
     set({
       clips: recalculatedClips,
       videoDuration: totalDuration,
-      videoResolution: resolution, // Use latest clip's resolution
-      trimStart: 0,
-      trimEnd: totalDuration
+      videoResolution: resolution // Use latest clip's resolution
     });
   },
 
@@ -215,6 +213,79 @@ export const useVideoStore = create<VideoState>((set, get) => ({
     set({ clips: updatedClips });
   },
 
+  updateClipTrim: (clipId, trimStart, trimEnd) => {
+    const state = get();
+    const clipIndex = state.clips.findIndex(c => c.id === clipId);
+
+    if (clipIndex === -1) {
+      console.error('[VideoStore] Clip not found:', clipId);
+      return;
+    }
+
+    const clip = state.clips[clipIndex];
+
+    // Validate trim values
+    const duration = clip.duration || 0;
+    const validTrimStart = Math.max(0, Math.min(trimStart, duration));
+    const validTrimEnd = Math.max(validTrimStart, Math.min(trimEnd, duration));
+
+    // Ensure minimum trim duration (0.1 seconds)
+    const minDuration = 0.1;
+    if (validTrimEnd - validTrimStart < minDuration) {
+      console.warn('[VideoStore] Trim duration too short, minimum is 0.1s');
+      return;
+    }
+
+    const updatedClips = [...state.clips];
+    updatedClips[clipIndex] = {
+      ...updatedClips[clipIndex],
+      trimStart: validTrimStart,
+      trimEnd: validTrimEnd
+    };
+
+    // Recalculate timeline positions since clip durations changed
+    const recalculatedClips = recalculateStartTimes(updatedClips);
+    const totalDuration = calculateTotalDuration(recalculatedClips);
+
+    console.log('[VideoStore] Updating clip trim:', { clipId, trimStart: validTrimStart, trimEnd: validTrimEnd, totalDuration });
+
+    set({
+      clips: recalculatedClips,
+      videoDuration: totalDuration
+    });
+  },
+
+  resetClipTrim: (clipId) => {
+    const state = get();
+    const clipIndex = state.clips.findIndex(c => c.id === clipId);
+
+    if (clipIndex === -1) {
+      console.error('[VideoStore] Clip not found:', clipId);
+      return;
+    }
+
+    const clip = state.clips[clipIndex];
+    const duration = clip.duration || 0;
+
+    const updatedClips = [...state.clips];
+    updatedClips[clipIndex] = {
+      ...updatedClips[clipIndex],
+      trimStart: 0,
+      trimEnd: duration
+    };
+
+    // Recalculate timeline positions
+    const recalculatedClips = recalculateStartTimes(updatedClips);
+    const totalDuration = calculateTotalDuration(recalculatedClips);
+
+    console.log('[VideoStore] Resetting clip trim:', { clipId, duration, totalDuration });
+
+    set({
+      clips: recalculatedClips,
+      videoDuration: totalDuration
+    });
+  },
+
   removeClip: (clipId) => {
     const state = get();
 
@@ -235,9 +306,7 @@ export const useVideoStore = create<VideoState>((set, get) => ({
       clips: recalculatedClips,
       videoDuration: totalDuration,
       videoPath: recalculatedClips.length > 0 ? recalculatedClips[recalculatedClips.length - 1].path : null,
-      videoName: recalculatedClips.length > 0 ? recalculatedClips[recalculatedClips.length - 1].name : null,
-      trimStart: 0,
-      trimEnd: totalDuration
+      videoName: recalculatedClips.length > 0 ? recalculatedClips[recalculatedClips.length - 1].name : null
     });
   },
 
@@ -284,8 +353,6 @@ export const useVideoStore = create<VideoState>((set, get) => ({
       videoName: null,
       videoDuration: null,
       videoResolution: null,
-      trimStart: 0,
-      trimEnd: 0,
       isPlaying: false,
       currentTime: 0
     });
@@ -295,9 +362,10 @@ export const useVideoStore = create<VideoState>((set, get) => ({
     const state = get();
     const currentTime = state.currentTime;
 
-    // Find which clip the playhead is currently in
+    // Find which clip the playhead is currently in (using trimmed durations)
     for (const clip of state.clips) {
-      const clipEndTime = clip.startTimeInSequence + (clip.duration || 0);
+      const trimmedDuration = clip.duration !== null ? (clip.trimEnd - clip.trimStart) : 0;
+      const clipEndTime = clip.startTimeInSequence + trimmedDuration;
       if (currentTime >= clip.startTimeInSequence && currentTime < clipEndTime) {
         return clip;
       }
@@ -363,28 +431,7 @@ export const useVideoStore = create<VideoState>((set, get) => ({
     set({
       clips: recalculatedClips,
       videoDuration: totalDuration,
-      videoResolution: resolution,
-      trimStart: 0,
-      trimEnd: totalDuration
-    });
-  },
-
-  setTrimPoints: (start, end) => {
-    // Validation
-    const state = get();
-    const validStart = Math.max(0, start);
-    const validEnd = Math.min(state.videoDuration || Infinity, end);
-
-    // Ensure minimum trim duration (0.5 seconds)
-    const minDuration = 0.5;
-    if (validEnd - validStart < minDuration) {
-      console.warn('[VideoStore] Trim duration too short, minimum is 0.5s');
-      return;
-    }
-
-    set({
-      trimStart: validStart,
-      trimEnd: validEnd
+      videoResolution: resolution
     });
   },
 
@@ -396,8 +443,6 @@ export const useVideoStore = create<VideoState>((set, get) => ({
       videoName: null,
       videoDuration: null,
       videoResolution: null,
-      trimStart: 0,
-      trimEnd: 0,
       isPlaying: false,
       currentTime: 0
     });

@@ -28,8 +28,6 @@ interface ExportDialogProps {
   // Sequential mode props
   clips?: Clip[];
   inputPath?: string | null;
-  trimStart?: number;
-  trimEnd?: number;
   videoName?: string | null;
   videoResolution?: { width: number; height: number };
   // Composite mode props
@@ -42,8 +40,6 @@ function ExportDialog({
   compositeMode = false,
   clips = [],
   inputPath: _inputPath, // Keep for backwards compatibility but unused
-  trimStart = 0,
-  trimEnd = 0,
   videoName,
   videoResolution,
   tracks = []
@@ -82,8 +78,11 @@ function ExportDialog({
         const seconds = parseFloat(match[3]);
         const currentTime = hours * 3600 + minutes * 60 + seconds;
 
-        const duration = trimEnd - trimStart;
-        const progressPercent = Math.min(100, (currentTime / duration) * 100);
+        // Calculate total duration from all clips
+        const totalDuration = clips.reduce((sum, clip) =>
+          sum + (clip.duration ? (clip.trimEnd - clip.trimStart) : 0), 0);
+
+        const progressPercent = totalDuration > 0 ? Math.min(100, (currentTime / totalDuration) * 100) : 0;
         setProgress(progressPercent);
       }
     };
@@ -94,7 +93,7 @@ function ExportDialog({
     return () => {
       window.removeEventListener('export-progress', handleProgressEvent);
     };
-  }, [open, trimStart, trimEnd]);
+  }, [open, clips]);
 
   // Start export
   const handleExport = async () => {
@@ -195,48 +194,39 @@ function ExportDialog({
           source_height: videoResolution?.height,
         };
 
-        // Identify which clips are involved in the trim range
-        const involvedClips: Array<{path: string, clipStart: number, clipEnd: number}> = [];
+        // Prepare clips with their individual trim settings
+        const clipsToExport: Array<{path: string, clipStart: number, clipEnd: number}> = [];
 
         for (const clip of clips) {
           if (!clip.duration) continue; // Skip clips without metadata
 
-          const clipStartTime = clip.startTimeInSequence;
-          const clipEndTime = clipStartTime + clip.duration;
-
-          // Check if this clip overlaps with the trim range
-          if (clipEndTime > trimStart && clipStartTime < trimEnd) {
-            // Calculate the portion of this clip to include
-            const segmentStart = Math.max(0, trimStart - clipStartTime);
-            const segmentEnd = Math.min(clip.duration, trimEnd - clipStartTime);
-
-            involvedClips.push({
-              path: clip.path,
-              clipStart: segmentStart,
-              clipEnd: segmentEnd
-            });
-          }
+          // Use the clip's individual trim settings
+          clipsToExport.push({
+            path: clip.path,
+            clipStart: clip.trimStart,
+            clipEnd: clip.trimEnd
+          });
         }
 
-        console.log('[ExportDialog] Involved clips:', involvedClips);
+        console.log('[ExportDialog] Clips to export:', clipsToExport);
 
-        if (involvedClips.length === 0) {
-          throw new Error('No clips found in the trim range');
-        } else if (involvedClips.length === 1) {
+        if (clipsToExport.length === 0) {
+          throw new Error('No clips to export');
+        } else if (clipsToExport.length === 1) {
           // Single clip - use trim_video
           console.log('[ExportDialog] Calling trim_video with:', {
-            inputPath: involvedClips[0].path,
+            inputPath: clipsToExport[0].path,
             outputPath: finalOutputPath,
-            startTime: involvedClips[0].clipStart,
-            endTime: involvedClips[0].clipEnd,
+            startTime: clipsToExport[0].clipStart,
+            endTime: clipsToExport[0].clipEnd,
             exportOptions
           });
 
           const result = (await invoke('trim_video', {
-            inputPath: involvedClips[0].path,
+            inputPath: clipsToExport[0].path,
             outputPath: finalOutputPath,
-            startTime: involvedClips[0].clipStart,
-            endTime: involvedClips[0].clipEnd,
+            startTime: clipsToExport[0].clipStart,
+            endTime: clipsToExport[0].clipEnd,
             exportOptions
           })) as string;
 
@@ -247,13 +237,13 @@ function ExportDialog({
         } else {
           // Multiple clips - use concatenate_clips
           console.log('[ExportDialog] Calling concatenate_clips with:', {
-            clips: involvedClips,
+            clips: clipsToExport,
             outputPath: finalOutputPath,
             exportOptions
           });
 
           const result = (await invoke('concatenate_clips', {
-            clips: involvedClips,
+            clips: clipsToExport,
             outputPath: finalOutputPath,
             exportOptions
           })) as string;
@@ -369,9 +359,9 @@ function ExportDialog({
               />
             </Box>
 
-            {!compositeMode && (
+            {!compositeMode && clips.length > 0 && (
               <Typography variant="caption" color="text.secondary" display="block">
-                Video will be trimmed from {trimStart.toFixed(1)}s to {trimEnd.toFixed(1)}s
+                {clips.length} {clips.length === 1 ? 'clip' : 'clips'} will be exported
               </Typography>
             )}
           </Box>
@@ -382,9 +372,11 @@ function ExportDialog({
             <Typography variant="body2" color="text.secondary" gutterBottom>
               Exporting at {RESOLUTION_OPTIONS[selectedResolution].label}
             </Typography>
-            <Typography variant="body2" color="text.secondary" gutterBottom>
-              Trimming video from {trimStart.toFixed(1)}s to {trimEnd.toFixed(1)}s
-            </Typography>
+            {!compositeMode && clips.length > 0 && (
+              <Typography variant="body2" color="text.secondary" gutterBottom>
+                Exporting {clips.length} {clips.length === 1 ? 'clip' : 'clips'}
+              </Typography>
+            )}
             <LinearProgress variant="determinate" value={progress} sx={{ mt: 2 }} />
             <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: 'block' }}>
               {progress.toFixed(0)}%

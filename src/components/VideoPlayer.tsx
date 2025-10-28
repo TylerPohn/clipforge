@@ -21,8 +21,6 @@ function VideoPlayer() {
     currentTime,
     volume,
     videoDuration,
-    trimStart,
-    trimEnd,
     setPlaying,
     setCurrentTime,
     setVolume,
@@ -81,9 +79,11 @@ function VideoPlayer() {
       const clip = getCurrentClip();
       if (!clip) return;
 
+      // Time within the trimmed portion of the clip
       const timeInClip = currentTime - clip.startTimeInSequence;
-      video.currentTime = Math.max(0, timeInClip);
-      console.log('[VideoPlayer] Set video time to:', video.currentTime, 'for clip:', clip.id);
+      // Video element time needs to include the trimStart offset
+      video.currentTime = Math.max(clip.trimStart, clip.trimStart + timeInClip);
+      console.log('[VideoPlayer] Set video time to:', video.currentTime, 'for clip:', clip.id, 'trimStart:', clip.trimStart);
 
       // Resume playback if we were playing when the clip switched
       if (shouldResumePlayback) {
@@ -161,12 +161,14 @@ function VideoPlayer() {
     const clip = getCurrentClip();
     if (!video || !clip) return;
 
-    // Calculate time within the current clip
+    // Calculate time within the trimmed portion of the clip (0 to trimmedDuration)
     const timeInClip = currentTime - clip.startTimeInSequence;
+    // Video element time needs to include the trimStart offset
+    const desiredVideoTime = clip.trimStart + timeInClip;
 
     // Only update if difference is significant (avoid feedback loop)
-    if (Math.abs(video.currentTime - timeInClip) > 0.5) {
-      video.currentTime = Math.max(0, timeInClip);
+    if (Math.abs(video.currentTime - desiredVideoTime) > 0.5) {
+      video.currentTime = Math.max(clip.trimStart, desiredVideoTime);
     }
   }, [currentTime, getCurrentClip]);
 
@@ -183,20 +185,18 @@ function VideoPlayer() {
     const clip = getCurrentClip();
     if (!video || !clip) return;
 
-    // Convert video element's time (relative to clip) to sequence time (relative to entire timeline)
-    const sequenceTime = clip.startTimeInSequence + video.currentTime;
+    // Video element's currentTime includes the trimStart offset
+    // Subtract it to get time within the trimmed portion (0 to trimmedDuration)
+    const timeInClip = video.currentTime - clip.trimStart;
+    // Convert to sequence time (relative to entire timeline)
+    const sequenceTime = clip.startTimeInSequence + timeInClip;
     setCurrentTime(sequenceTime);
 
-    // Auto-pause at trim end point (global timeline trim)
-    if (trimEnd && sequenceTime >= trimEnd) {
+    // Auto-pause when reaching the end of the trimmed portion
+    const trimmedDuration = clip.trimEnd - clip.trimStart;
+    if (timeInClip >= trimmedDuration) {
       video.pause();
       setPlaying(false);
-      setCurrentTime(trimEnd);
-    }
-
-    // Skip to trim start if playing before it (global timeline trim)
-    if (trimStart && sequenceTime < trimStart && isPlaying) {
-      setCurrentTime(trimStart);
     }
   };
 

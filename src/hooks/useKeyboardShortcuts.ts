@@ -6,11 +6,8 @@ export function useKeyboardShortcuts() {
     isPlaying,
     currentTime,
     videoDuration,
-    trimStart,
-    trimEnd,
     setPlaying,
-    setCurrentTime,
-    setTrimPoints
+    setCurrentTime
   } = useVideoStore();
 
   useEffect(() => {
@@ -56,41 +53,18 @@ export function useKeyboardShortcuts() {
           setCurrentTime(Math.min(videoDuration || 0, currentTime + 0.033));
           break;
 
-        // TRIM SHORTCUTS
-        case 'KeyI':
-          // Set trim start (In point) to current time
-          e.preventDefault();
-          if (videoDuration) {
-            setTrimPoints(currentTime, Math.max(currentTime + 1, trimEnd));
-          }
-          break;
-
-        case 'KeyO':
-          // Set trim end (Out point) to current time
-          e.preventDefault();
-          if (videoDuration) {
-            setTrimPoints(Math.min(trimStart, currentTime - 1), currentTime);
-          }
-          break;
-
-        case 'KeyR':
-          // Reset trim to full video
-          e.preventDefault();
-          if (videoDuration) {
-            setTrimPoints(0, videoDuration);
-          }
-          break;
-
         case 'Home':
-          // Jump to trim start
+          // Jump to start
           e.preventDefault();
-          setCurrentTime(trimStart);
+          setCurrentTime(0);
           break;
 
         case 'End':
-          // Jump to trim end
+          // Jump to end
           e.preventDefault();
-          setCurrentTime(trimEnd);
+          if (videoDuration) {
+            setCurrentTime(videoDuration);
+          }
           break;
       }
     };
@@ -101,10 +75,7 @@ export function useKeyboardShortcuts() {
     isPlaying,
     currentTime,
     videoDuration,
-    trimStart,
-    trimEnd,
     setPlaying,
-    setCurrentTime,
-    setTrimPoints
+    setCurrentTime
   ]);
 }

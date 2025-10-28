@@ -1,21 +1,18 @@
 import { useRef, useEffect, useState } from 'react';
-import { Box, Typography, Stack, IconButton } from '@mui/material';
-import { ContentCut } from '@mui/icons-material';
+import { Box, Typography, Stack } from '@mui/material';
 import { useVideoStore } from '../store/videoStore';
 
 function TimelineRuler() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
-  const [isDragging, setIsDragging] = useState<'start' | 'end' | 'playhead' | null>(null);
+  const [isDragging, setIsDragging] = useState<{ type: 'clip-start' | 'clip-end' | 'playhead'; clipId?: string } | null>(null);
 
   const {
     clips,
     videoDuration,
     currentTime,
-    trimStart,
-    trimEnd,
     setCurrentTime,
-    setTrimPoints
+    updateClipTrim
   } = useVideoStore();
 
   // Format time as MM:SS
@@ -43,12 +40,16 @@ function TimelineRuler() {
     ctx.fillStyle = 'rgba(255, 255, 255, 0.05)';
     ctx.fillRect(0, 0, width, height);
 
-    // Draw each clip as a separate block
+    // Draw each clip showing only trimmed portion with trim handles
+    const clipGap = 4; // Pixels of space between clips
+
     clips.forEach((clip, index) => {
       if (!clip.duration) return;
 
-      const clipStartX = (clip.startTimeInSequence / videoDuration) * width;
-      const clipEndX = ((clip.startTimeInSequence + clip.duration) / videoDuration) * width;
+      // Calculate trimmed duration
+      const trimmedDuration = clip.trimEnd - clip.trimStart;
+      const clipStartX = (clip.startTimeInSequence / videoDuration) * width + (index > 0 ? clipGap / 2 : 0);
+      const clipEndX = ((clip.startTimeInSequence + trimmedDuration) / videoDuration) * width - (index < clips.length - 1 ? clipGap / 2 : 0);
       const clipWidth = clipEndX - clipStartX;
 
       // Alternate colors for visual distinction
@@ -61,10 +62,14 @@ function TimelineRuler() {
       ctx.fillStyle = colors[index % colors.length];
       ctx.fillRect(clipStartX, 0, clipWidth, height);
 
-      // Draw clip boundaries
-      ctx.fillStyle = 'rgba(255, 255, 255, 0.5)';
-      ctx.fillRect(clipStartX, 0, 2, height);
-      ctx.fillRect(clipEndX - 2, 0, 2, height);
+      // Draw trim handles for this clip (yellow/gold color)
+      ctx.fillStyle = '#ffd700';
+
+      // Left trim handle
+      ctx.fillRect(clipStartX - 2, 0, 4, height);
+
+      // Right trim handle
+      ctx.fillRect(clipEndX - 2, 0, 4, height);
 
       // Draw clip name (if space permits)
       if (clipWidth > 60) {
@@ -73,26 +78,16 @@ function TimelineRuler() {
         ctx.textBaseline = 'top';
         const clipName = clip.name.length > 15 ? clip.name.substring(0, 12) + '...' : clip.name;
         ctx.fillText(clipName, clipStartX + 4, 4);
+
+        // Show trimmed duration
+        ctx.font = '9px sans-serif';
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.6)';
+        ctx.fillText(formatTime(trimmedDuration), clipStartX + 4, 18);
       }
     });
 
-    // Calculate pixel positions for trim handles
-    const trimStartX = (trimStart / videoDuration) * width;
-    const trimEndX = (trimEnd / videoDuration) * width;
+    // Calculate playhead position
     const playheadX = (currentTime / videoDuration) * width;
-
-    // Draw trimmed region overlay (dimmed areas outside trim)
-    ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
-    ctx.fillRect(0, 0, trimStartX, height);
-    ctx.fillRect(trimEndX, 0, width - trimEndX, height);
-
-    // Draw trim start handle (left side)
-    ctx.fillStyle = '#00bcd4';
-    ctx.fillRect(trimStartX - 2, 0, 4, height);
-
-    // Draw trim end handle (right side)
-    ctx.fillStyle = '#00bcd4';
-    ctx.fillRect(trimEndX - 2, 0, 4, height);
 
     // Draw playhead (pink/red line) - on top of everything
     ctx.fillStyle = '#ff4081';
@@ -112,7 +107,7 @@ function TimelineRuler() {
       ctx.fillText(formatTime(i), x + 2, height - 12);
     }
 
-  }, [clips, videoDuration, trimStart, trimEnd, currentTime, formatTime]);
+  }, [clips, videoDuration, currentTime, formatTime]);
 
   // Handle mouse down (start dragging or seeking)
   const handleMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
@@ -124,21 +119,51 @@ function TimelineRuler() {
 
     // Determine what user clicked on (threshold = 10 pixels)
     const threshold = 10;
+    const clipGap = 4; // Must match the gap in the drawing code
 
-    const trimStartX = (trimStart / videoDuration) * rect.width;
-    const trimEndX = (trimEnd / videoDuration) * rect.width;
+    // Find the closest clip handle (if any)
+    let closestHandle: { type: 'clip-start' | 'clip-end'; clipId: string; distance: number } | null = null;
+
+    for (let index = 0; index < clips.length; index++) {
+      const clip = clips[index];
+      if (!clip.duration) continue;
+
+      const trimmedDuration = clip.trimEnd - clip.trimStart;
+      const clipStartX = (clip.startTimeInSequence / videoDuration) * rect.width + (index > 0 ? clipGap / 2 : 0);
+      const clipEndX = ((clip.startTimeInSequence + trimmedDuration) / videoDuration) * rect.width - (index < clips.length - 1 ? clipGap / 2 : 0);
+
+      const startDistance = Math.abs(x - clipStartX);
+      const endDistance = Math.abs(x - clipEndX);
+
+      if (startDistance < threshold) {
+        if (!closestHandle || startDistance < closestHandle.distance) {
+          closestHandle = { type: 'clip-start', clipId: clip.id, distance: startDistance };
+        }
+      }
+
+      if (endDistance < threshold) {
+        if (!closestHandle || endDistance < closestHandle.distance) {
+          closestHandle = { type: 'clip-end', clipId: clip.id, distance: endDistance };
+        }
+      }
+    }
+
+    // If we found a clip handle, use it
+    if (closestHandle) {
+      setIsDragging({ type: closestHandle.type, clipId: closestHandle.clipId });
+      return;
+    }
+
     const playheadX = (currentTime / videoDuration) * rect.width;
 
-    if (Math.abs(x - trimStartX) < threshold) {
-      setIsDragging('start');
-    } else if (Math.abs(x - trimEndX) < threshold) {
-      setIsDragging('end');
-    } else if (Math.abs(x - playheadX) < threshold) {
-      setIsDragging('playhead');
-    } else {
-      // Click on timeline = seek
-      setCurrentTime(timeAtX);
+    // Check if clicking on playhead (only if we didn't hit a clip handle)
+    if (Math.abs(x - playheadX) < threshold) {
+      setIsDragging({ type: 'playhead' });
+      return;
     }
+
+    // Click on timeline = seek
+    setCurrentTime(timeAtX);
   };
 
   // Handle mouse move (dragging)
@@ -149,25 +174,38 @@ function TimelineRuler() {
     const x = e.clientX - rect.left;
     const timeAtX = Math.max(0, Math.min(videoDuration, (x / rect.width) * videoDuration));
 
-    if (isDragging === 'start') {
-      setTrimPoints(Math.min(timeAtX, trimEnd - 0.5), trimEnd);
-    } else if (isDragging === 'end') {
-      setTrimPoints(trimStart, Math.max(timeAtX, trimStart + 0.5));
-    } else if (isDragging === 'playhead') {
+    if (isDragging.type === 'playhead') {
       setCurrentTime(timeAtX);
+    } else if ((isDragging.type === 'clip-start' || isDragging.type === 'clip-end') && isDragging.clipId) {
+      const clip = clips.find(c => c.id === isDragging.clipId);
+      if (!clip || !clip.duration) return;
+
+      // Convert timeline time to time within the clip's original duration
+      const relativeTime = timeAtX - clip.startTimeInSequence;
+
+      // Calculate where in the original clip this corresponds to
+      // We need to account for the current trim offset
+      if (isDragging.type === 'clip-start') {
+        // Dragging the start handle - adjust trimStart
+        // The new trimStart should be the current trimStart plus/minus the delta
+        const currentTrimmedStart = 0; // Start of visible portion in sequence
+        const delta = relativeTime - currentTrimmedStart;
+        const newTrimStart = Math.max(0, Math.min(clip.trimStart + delta, clip.trimEnd - 0.1));
+
+        updateClipTrim(clip.id, newTrimStart, clip.trimEnd);
+      } else {
+        // Dragging the end handle - adjust trimEnd
+        const newTrimmedDuration = Math.max(0.1, relativeTime);
+        const newTrimEnd = Math.min(clip.duration, clip.trimStart + newTrimmedDuration);
+
+        updateClipTrim(clip.id, clip.trimStart, newTrimEnd);
+      }
     }
   };
 
   // Handle mouse up (stop dragging)
   const handleMouseUp = () => {
     setIsDragging(null);
-  };
-
-  // Reset trim to full video
-  const resetTrim = () => {
-    if (videoDuration) {
-      setTrimPoints(0, videoDuration);
-    }
   };
 
   if (!videoDuration) {
@@ -194,24 +232,14 @@ function TimelineRuler() {
       borderTop: '1px solid rgba(255, 255, 255, 0.12)',
       p: 2
     }}>
-      {/* Header with title and trim info */}
+      {/* Header with title and duration info */}
       <Stack direction="row" alignItems="center" justifyContent="space-between" sx={{ mb: 1 }}>
         <Typography variant="subtitle2" color="text.secondary">
           Timeline
         </Typography>
-        <Stack direction="row" spacing={1} alignItems="center">
-          <Typography variant="caption" color="text.secondary">
-            {formatTime(trimStart)} → {formatTime(trimEnd)} ({formatTime(trimEnd - trimStart)})
-          </Typography>
-          <IconButton
-            size="small"
-            onClick={resetTrim}
-            title="Reset trim to full video"
-            sx={{ p: 0.5 }}
-          >
-            <ContentCut fontSize="small" />
-          </IconButton>
-        </Stack>
+        <Typography variant="caption" color="text.secondary">
+          Total Duration: {formatTime(videoDuration)}
+        </Typography>
       </Stack>
 
       {/* Canvas Timeline */}

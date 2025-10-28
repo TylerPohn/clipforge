@@ -1,5 +1,5 @@
 import { Box, Typography, Paper, IconButton, Stack, Chip } from '@mui/material';
-import { Delete, ArrowBack, ArrowForward } from '@mui/icons-material';
+import { Delete, ArrowBack, ArrowForward, RestartAlt } from '@mui/icons-material';
 import { useVideoStore, Clip } from '../store/videoStore';
 import { useVideoThumbnail } from '../hooks/useVideoThumbnail';
 
@@ -10,9 +10,10 @@ interface ClipCardProps {
   isActive: boolean;
   onRemove: (id: string) => void;
   onReorder: (clipId: string, newIndex: number) => void;
+  onReset: (id: string) => void;
 }
 
-function ClipCard({ clip, index, totalClips, isActive, onRemove, onReorder }: ClipCardProps) {
+function ClipCard({ clip, index, totalClips, isActive, onRemove, onReorder, onReset }: ClipCardProps) {
   const thumbnailUrl = useVideoThumbnail(clip.path);
 
   const formatDuration = (seconds: number | null) => {
@@ -21,6 +22,10 @@ function ClipCard({ clip, index, totalClips, isActive, onRemove, onReorder }: Cl
     const secs = Math.floor(seconds % 60);
     return `${mins}:${secs.toString().padStart(2, '0')}`;
   };
+
+  // Check if clip is trimmed
+  const isTrimmed = clip.duration !== null && (clip.trimStart > 0 || clip.trimEnd < clip.duration);
+  const trimmedDuration = clip.duration !== null ? clip.trimEnd - clip.trimStart : null;
 
   const handleMoveBack = (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -34,6 +39,11 @@ function ClipCard({ clip, index, totalClips, isActive, onRemove, onReorder }: Cl
     if (index < totalClips - 1) {
       onReorder(clip.id, index + 1);
     }
+  };
+
+  const handleReset = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    onReset(clip.id);
   };
 
   return (
@@ -185,23 +195,42 @@ function ClipCard({ clip, index, totalClips, isActive, onRemove, onReorder }: Cl
           >
             {clip.name}
           </Typography>
-          <IconButton
-            size="small"
-            onClick={(e) => {
-              e.stopPropagation();
-              onRemove(clip.id);
-            }}
-            sx={{
-              p: 0.25,
-              opacity: 0.6,
-              '&:hover': { opacity: 1, color: 'error.main' }
-            }}
-          >
-            <Delete fontSize="small" />
-          </IconButton>
+          <Stack direction="row" spacing={0.25}>
+            {/* Reset button - only show if clip is trimmed */}
+            {isTrimmed && (
+              <IconButton
+                size="small"
+                onClick={handleReset}
+                title="Reset to original duration"
+                sx={{
+                  p: 0.25,
+                  opacity: 0.6,
+                  '&:hover': { opacity: 1, color: 'warning.main' }
+                }}
+              >
+                <RestartAlt fontSize="small" />
+              </IconButton>
+            )}
+            <IconButton
+              size="small"
+              onClick={(e) => {
+                e.stopPropagation();
+                onRemove(clip.id);
+              }}
+              sx={{
+                p: 0.25,
+                opacity: 0.6,
+                '&:hover': { opacity: 1, color: 'error.main' }
+              }}
+            >
+              <Delete fontSize="small" />
+            </IconButton>
+          </Stack>
         </Stack>
         <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.65rem' }}>
-          {formatDuration(clip.duration)}
+          {isTrimmed
+            ? `${formatDuration(trimmedDuration)} / ${formatDuration(clip.duration)}`
+            : formatDuration(clip.duration)}
         </Typography>
       </Box>
     </Paper>
@@ -212,6 +241,7 @@ function MediaPanel() {
   const clips = useVideoStore((state) => state.clips);
   const removeClip = useVideoStore((state) => state.removeClip);
   const reorderClip = useVideoStore((state) => state.reorderClip);
+  const resetClipTrim = useVideoStore((state) => state.resetClipTrim);
   const getCurrentClip = useVideoStore((state) => state.getCurrentClip);
 
   const currentClip = getCurrentClip();
@@ -266,6 +296,7 @@ function MediaPanel() {
             isActive={currentClip?.id === clip.id}
             onRemove={removeClip}
             onReorder={reorderClip}
+            onReset={resetClipTrim}
           />
         ))}
       </Box>
