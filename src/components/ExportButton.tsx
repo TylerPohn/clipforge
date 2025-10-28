@@ -12,6 +12,7 @@ function ExportButton({ compositeMode = false }: ExportButtonProps) {
   const [dialogOpen, setDialogOpen] = useState(false);
 
   const {
+    clips,
     videoPath,
     videoName,
     videoDuration,
@@ -22,10 +23,10 @@ function ExportButton({ compositeMode = false }: ExportButtonProps) {
   } = useVideoStore();
 
   // For composite mode: can export if there are visible tracks
-  // For sequential mode: can export if video exists and trim duration > 0
+  // For sequential mode: can export if clips exist and trim duration > 0
   const canExport = compositeMode
     ? composite.tracks.length > 0 && composite.tracks.some(t => t.isVisible)
-    : videoPath && videoDuration && (trimEnd - trimStart) > 0;
+    : clips.length > 0 && videoDuration && (trimEnd - trimStart) > 0;
 
   const handleClick = () => {
     console.log('[ExportButton] Export button clicked');
@@ -66,6 +67,7 @@ function ExportButton({ compositeMode = false }: ExportButtonProps) {
         onClose={() => setDialogOpen(false)}
         compositeMode={compositeMode}
         // Sequential mode props
+        clips={clips}
         inputPath={videoPath}
         trimStart={trimStart}
         trimEnd={trimEnd}

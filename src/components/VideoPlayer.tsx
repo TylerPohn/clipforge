@@ -62,7 +62,9 @@ function VideoPlayer() {
     const video = videoRef.current;
     if (!video || !videoSrc) return;
 
-    console.log('[VideoPlayer] Loading new video source:', videoSrc);
+    // Capture the playing state at the moment of clip switch
+    const shouldResumePlayback = isPlaying;
+    console.log('[VideoPlayer] Loading new video source:', videoSrc, 'shouldResumePlayback:', shouldResumePlayback);
 
     // Force the video to load the new source
     video.load();
@@ -75,10 +77,19 @@ function VideoPlayer() {
       const timeInClip = currentTime - clip.startTimeInSequence;
       video.currentTime = Math.max(0, timeInClip);
       console.log('[VideoPlayer] Set video time to:', video.currentTime, 'for clip:', clip.id);
+
+      // Resume playback if we were playing when the clip switched
+      if (shouldResumePlayback) {
+        console.log('[VideoPlayer] Resuming playback after clip switch');
+        video.play().catch(err => {
+          console.error('[VideoPlayer] Failed to resume playback:', err);
+        });
+      }
     };
 
     video.addEventListener('loadedmetadata', handleLoadedMetadata);
     return () => video.removeEventListener('loadedmetadata', handleLoadedMetadata);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [videoSrc]);
 
   // Log video source changes
@@ -169,23 +180,6 @@ function VideoPlayer() {
     const sequenceTime = clip.startTimeInSequence + video.currentTime;
     setCurrentTime(sequenceTime);
 
-    // Check if we've reached the end of this clip and need to move to the next one
-    const clipEndTime = clip.startTimeInSequence + (clip.duration || 0);
-    if (sequenceTime >= clipEndTime && isPlaying) {
-      // Find next clip
-      const currentClipIndex = clips.findIndex(c => c.id === clip.id);
-      if (currentClipIndex < clips.length - 1) {
-        // Move to start of next clip
-        const nextClip = clips[currentClipIndex + 1];
-        setCurrentTime(nextClip.startTimeInSequence);
-      } else {
-        // We're at the end of the last clip, pause playback
-        video.pause();
-        setPlaying(false);
-        setCurrentTime(clipEndTime);
-      }
-    }
-
     // Auto-pause at trim end point (global timeline trim)
     if (trimEnd && sequenceTime >= trimEnd) {
       video.pause();
@@ -196,6 +190,29 @@ function VideoPlayer() {
     // Skip to trim start if playing before it (global timeline trim)
     if (trimStart && sequenceTime < trimStart && isPlaying) {
       setCurrentTime(trimStart);
+    }
+  };
+
+  // Handle video ended event
+  const handleEnded = () => {
+    const clip = getCurrentClip();
+    if (!clip) {
+      setPlaying(false);
+      return;
+    }
+
+    // Check if there's a next clip
+    const currentClipIndex = clips.findIndex(c => c.id === clip.id);
+    if (currentClipIndex < clips.length - 1) {
+      // There's a next clip, transition to it
+      const nextClip = clips[currentClipIndex + 1];
+      console.log('[VideoPlayer] Clip ended, moving to next clip:', nextClip.id);
+      setCurrentTime(nextClip.startTimeInSequence);
+      // Keep playing (don't pause)
+    } else {
+      // This is the last clip, pause playback
+      console.log('[VideoPlayer] Last clip ended, pausing');
+      setPlaying(false);
     }
   };
 
@@ -253,7 +270,7 @@ function VideoPlayer() {
           ref={videoRef}
           src={videoSrc || undefined}
           onTimeUpdate={handleTimeUpdate}
-          onEnded={() => setPlaying(false)}
+          onEnded={handleEnded}
           onLoadedMetadata={() => {
             console.log('[VideoPlayer] Metadata loaded:', {
               duration: videoRef.current?.duration,

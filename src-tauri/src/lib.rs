@@ -68,6 +68,15 @@ struct CompositeExportOptions {
     source_height: Option<i32>,
 }
 
+#[derive(Debug, Deserialize)]
+struct ClipSegment {
+    path: String,
+    #[serde(rename = "clipStart")]
+    clip_start: f64,
+    #[serde(rename = "clipEnd")]
+    clip_end: f64,
+}
+
 #[tauri::command]
 async fn trim_video(
     input_path: String,
@@ -191,6 +200,138 @@ async fn trim_video(
         let err_msg = format!("FFmpeg exited with status: {}", status);
         println!("[trim_video] ERROR: {}", err_msg);
         Err(err_msg)
+    }
+}
+
+#[tauri::command]
+async fn concatenate_clips(
+    clips: Vec<ClipSegment>,
+    output_path: String,
+    export_options: Option<ExportOptions>,
+    _window: tauri::Window
+) -> Result<String, String> {
+    println!("[concatenate_clips] Starting concatenation of {} clips", clips.len());
+    println!("[concatenate_clips] Output: {}", output_path);
+
+    if clips.is_empty() {
+        return Err("No clips provided for concatenation".to_string());
+    }
+
+    // Parse export options
+    let opts = export_options.unwrap_or_else(|| ExportOptions {
+        resolution: Some("source".to_string()),
+        source_width: None,
+        source_height: None,
+    });
+
+    // Format time as HH:MM:SS.mmm
+    fn format_time(seconds: f64) -> String {
+        let hours = (seconds / 3600.0).floor() as u32;
+        let minutes = ((seconds % 3600.0) / 60.0).floor() as u32;
+        let secs = seconds % 60.0;
+        format!("{:02}:{:02}:{:06.3}", hours, minutes, secs)
+    }
+
+    // Create a temporary directory for intermediate files
+    let temp_dir = std::env::temp_dir().join(format!("clipforge_{}", std::process::id()));
+    std::fs::create_dir_all(&temp_dir)
+        .map_err(|e| format!("Failed to create temp directory: {}", e))?;
+
+    // Process each clip segment
+    let mut segment_paths = Vec::new();
+    for (i, clip) in clips.iter().enumerate() {
+        println!("[concatenate_clips] Processing clip {}: {} ({}s to {}s)",
+            i, clip.path, clip.clip_start, clip.clip_end);
+
+        let segment_path = temp_dir.join(format!("segment_{}.mp4", i));
+        let start_str = format_time(clip.clip_start);
+        let duration = clip.clip_end - clip.clip_start;
+
+        // Build ffmpeg command to extract this segment
+        let mut ffmpeg_args = vec![
+            "-y".to_string(),
+            "-ss".to_string(), start_str,
+            "-i".to_string(), clip.path.clone(),
+            "-t".to_string(), format_time(duration),
+            "-c:v".to_string(), "libx264".to_string(),
+            "-preset".to_string(), "fast".to_string(),
+            "-crf".to_string(), "18".to_string(),
+            "-c:a".to_string(), "aac".to_string(),
+            "-b:a".to_string(), "192k".to_string(),
+        ];
+
+        // Handle resolution settings
+        match opts.resolution.as_deref() {
+            Some("source") => {},
+            Some("720p") => {
+                ffmpeg_args.extend(vec!["-vf".to_string(), "scale=-2:720".to_string()]);
+            },
+            Some("1080p") => {
+                ffmpeg_args.extend(vec!["-vf".to_string(), "scale=-2:1080".to_string()]);
+            },
+            _ => {}
+        }
+
+        ffmpeg_args.push(segment_path.to_str().unwrap().to_string());
+
+        println!("[concatenate_clips] FFmpeg args for segment {}: {:?}", i, ffmpeg_args);
+
+        let status = Command::new("ffmpeg")
+            .args(&ffmpeg_args)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .map_err(|e| format!("Failed to execute FFmpeg: {}", e))?;
+
+        if !status.success() {
+            // Clean up temp directory
+            let _ = std::fs::remove_dir_all(&temp_dir);
+            return Err(format!("FFmpeg failed to process segment {}", i));
+        }
+
+        segment_paths.push(segment_path);
+    }
+
+    // Create concat list file
+    let concat_list_path = temp_dir.join("concat_list.txt");
+    let concat_content = segment_paths
+        .iter()
+        .map(|p| format!("file '{}'", p.to_str().unwrap()))
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    std::fs::write(&concat_list_path, concat_content)
+        .map_err(|e| format!("Failed to write concat list: {}", e))?;
+
+    println!("[concatenate_clips] Concatenating segments into final output");
+
+    // Concatenate all segments
+    let concat_args = vec![
+        "-y".to_string(),
+        "-f".to_string(), "concat".to_string(),
+        "-safe".to_string(), "0".to_string(),
+        "-i".to_string(), concat_list_path.to_str().unwrap().to_string(),
+        "-c".to_string(), "copy".to_string(),
+        output_path.clone(),
+    ];
+
+    println!("[concatenate_clips] Final concat args: {:?}", concat_args);
+
+    let status = Command::new("ffmpeg")
+        .args(&concat_args)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map_err(|e| format!("Failed to execute FFmpeg for concatenation: {}", e))?;
+
+    // Clean up temp directory
+    let _ = std::fs::remove_dir_all(&temp_dir);
+
+    if status.success() {
+        println!("[concatenate_clips] Concatenation completed successfully");
+        Ok(output_path)
+    } else {
+        Err("FFmpeg concatenation failed".to_string())
     }
 }
 
@@ -835,6 +976,7 @@ pub fn run() {
             get_video_file,
             get_video_file_path,
             trim_video,
+            concatenate_clips,
             save_file_dialog,
             start_screen_recording,
             stop_screen_recording,

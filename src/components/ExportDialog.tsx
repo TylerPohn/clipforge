@@ -16,6 +16,7 @@ import {
 import { CheckCircle, Error as ErrorIcon } from '@mui/icons-material';
 import { VideoResolution, RESOLUTION_OPTIONS } from '../types/recording';
 import { Track } from '../types/clip';
+import { Clip } from '../store/videoStore';
 import ResolutionSelector from './ResolutionSelector';
 
 declare const window: any;
@@ -25,6 +26,7 @@ interface ExportDialogProps {
   onClose: () => void;
   compositeMode?: boolean;
   // Sequential mode props
+  clips?: Clip[];
   inputPath?: string | null;
   trimStart?: number;
   trimEnd?: number;
@@ -38,7 +40,8 @@ function ExportDialog({
   open,
   onClose,
   compositeMode = false,
-  inputPath,
+  clips = [],
+  inputPath: _inputPath, // Keep for backwards compatibility but unused
   trimStart = 0,
   trimEnd = 0,
   videoName,
@@ -185,33 +188,81 @@ function ExportDialog({
         setProgress(100);
 
       } else {
-        // Sequential export (existing logic)
+        // Sequential export
         const exportOptions = {
           resolution: selectedResolution,
           source_width: videoResolution?.width,
           source_height: videoResolution?.height,
         };
 
-        console.log('[ExportDialog] Calling trim_video with:', {
-          inputPath,
-          outputPath: finalOutputPath,
-          startTime: trimStart,
-          endTime: trimEnd,
-          exportOptions
-        });
+        // Identify which clips are involved in the trim range
+        const involvedClips: Array<{path: string, clipStart: number, clipEnd: number}> = [];
 
-        const result = (await invoke('trim_video', {
-          inputPath,
-          outputPath: finalOutputPath,
-          startTime: trimStart,
-          endTime: trimEnd,
-          exportOptions
-        })) as string;
+        for (const clip of clips) {
+          if (!clip.duration) continue; // Skip clips without metadata
 
-        console.log('[ExportDialog] trim_video completed:', result);
-        setOutputPath(result);
-        setStatus('success');
-        setProgress(100);
+          const clipStartTime = clip.startTimeInSequence;
+          const clipEndTime = clipStartTime + clip.duration;
+
+          // Check if this clip overlaps with the trim range
+          if (clipEndTime > trimStart && clipStartTime < trimEnd) {
+            // Calculate the portion of this clip to include
+            const segmentStart = Math.max(0, trimStart - clipStartTime);
+            const segmentEnd = Math.min(clip.duration, trimEnd - clipStartTime);
+
+            involvedClips.push({
+              path: clip.path,
+              clipStart: segmentStart,
+              clipEnd: segmentEnd
+            });
+          }
+        }
+
+        console.log('[ExportDialog] Involved clips:', involvedClips);
+
+        if (involvedClips.length === 0) {
+          throw new Error('No clips found in the trim range');
+        } else if (involvedClips.length === 1) {
+          // Single clip - use trim_video
+          console.log('[ExportDialog] Calling trim_video with:', {
+            inputPath: involvedClips[0].path,
+            outputPath: finalOutputPath,
+            startTime: involvedClips[0].clipStart,
+            endTime: involvedClips[0].clipEnd,
+            exportOptions
+          });
+
+          const result = (await invoke('trim_video', {
+            inputPath: involvedClips[0].path,
+            outputPath: finalOutputPath,
+            startTime: involvedClips[0].clipStart,
+            endTime: involvedClips[0].clipEnd,
+            exportOptions
+          })) as string;
+
+          console.log('[ExportDialog] trim_video completed:', result);
+          setOutputPath(result);
+          setStatus('success');
+          setProgress(100);
+        } else {
+          // Multiple clips - use concatenate_clips
+          console.log('[ExportDialog] Calling concatenate_clips with:', {
+            clips: involvedClips,
+            outputPath: finalOutputPath,
+            exportOptions
+          });
+
+          const result = (await invoke('concatenate_clips', {
+            clips: involvedClips,
+            outputPath: finalOutputPath,
+            exportOptions
+          })) as string;
+
+          console.log('[ExportDialog] concatenate_clips completed:', result);
+          setOutputPath(result);
+          setStatus('success');
+          setProgress(100);
+        }
       }
 
     } catch (err: any) {
