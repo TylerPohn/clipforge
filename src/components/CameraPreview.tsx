@@ -1,12 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
-import { Box, Alert, Typography } from '@mui/material';
-import { Videocam, VideocamOff } from '@mui/icons-material';
+import { Box, Alert, Typography, Chip } from '@mui/material';
+import { Videocam, VideocamOff, FiberManualRecord } from '@mui/icons-material';
 
 interface CameraPreviewProps {
   isActive: boolean;
+  isRecording?: boolean;
 }
 
-function CameraPreview({ isActive }: CameraPreviewProps) {
+function CameraPreview({ isActive, isRecording = false }: CameraPreviewProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [stream, setStream] = useState<MediaStream | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -136,6 +137,27 @@ function CameraPreview({ isActive }: CameraPreviewProps) {
                 Requesting camera access...
               </Typography>
             </Box>
+          )}
+
+          {/* Recording Indicator Overlay */}
+          {isRecording && (
+            <Chip
+              icon={<FiberManualRecord />}
+              label="REC"
+              color="error"
+              size="small"
+              sx={{
+                position: 'absolute',
+                top: 8,
+                left: 8,
+                fontWeight: 'bold',
+                animation: 'blink 1.5s ease-in-out infinite',
+                '@keyframes blink': {
+                  '0%, 100%': { opacity: 1 },
+                  '50%': { opacity: 0.6 }
+                }
+              }}
+            />
           )}
         </Box>
       )}

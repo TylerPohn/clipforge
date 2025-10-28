@@ -198,7 +198,7 @@ function RecordingDialog({ open, onClose }: RecordingDialogProps) {
 
               {/* Camera Preview */}
               {source === 'camera' && (
-                <CameraPreview isActive={true} />
+                <CameraPreview isActive={true} isRecording={false} />
               )}
 
               {/* Permission Notices */}
@@ -234,11 +234,18 @@ function RecordingDialog({ open, onClose }: RecordingDialogProps) {
               )}
             </Box>
           ) : (
-            <Box sx={{ textAlign: 'center', py: 4 }}>
+            <Box sx={{ textAlign: 'center', py: 2 }}>
+              {/* Camera Preview During Recording */}
+              {source === 'camera' && (
+                <Box sx={{ mb: 2 }}>
+                  <CameraPreview isActive={true} isRecording={true} />
+                </Box>
+              )}
+
               {/* Recording Indicator */}
-              <Box sx={{ position: 'relative', display: 'inline-flex', mb: 3 }}>
+              <Box sx={{ position: 'relative', display: 'inline-flex', mb: 2 }}>
                 <CircularProgress
-                  size={100}
+                  size={80}
                   thickness={2}
                   sx={{
                     color: 'error.main',
@@ -259,7 +266,7 @@ function RecordingDialog({ open, onClose }: RecordingDialogProps) {
                   alignItems: 'center',
                   justifyContent: 'center'
                 }}>
-                  <FiberManualRecord sx={{ fontSize: 40, color: 'error.main' }} />
+                  <FiberManualRecord sx={{ fontSize: 32, color: 'error.main' }} />
                 </Box>
               </Box>
 
