@@ -66,6 +66,86 @@ ClipForge is built using a modern, cross-platform architecture that combines web
 - **Event-Driven Preview** - Screen recording preview uses base64-encoded JPEG frames sent via Tauri events
 - **Platform-Specific APIs** - Recording leverages native capture APIs for best quality and compatibility
 
+## Development
+
+### Prerequisites
+
+- [Node.js](https://nodejs.org/) (v18 or later)
+- [Rust](https://www.rust-lang.org/tools/install)
+- [FFmpeg](https://ffmpeg.org/download.html) installed on your system
+
+### Setup
+
+1. Clone the repository
+2. Install dependencies:
+   ```bash
+   npm install
+   ```
+
+3. Run in development mode:
+   ```bash
+   npm run tauri:dev
+   ```
+
+## Building for Production
+
+ClipForge bundles FFmpeg binaries with the application, so users don't need to install FFmpeg separately.
+
+### Step 1: Download FFmpeg Binaries
+
+Before building, download the platform-specific FFmpeg binaries:
+
+```bash
+cd src-tauri
+./download-ffmpeg.sh
+```
+
+This downloads:
+- **macOS**: FFmpeg and FFprobe for both Apple Silicon (ARM64) and Intel (x86_64)
+- **Windows**: FFmpeg and FFprobe for 64-bit Windows
+
+**Note:** These binaries (~670MB total) are excluded from git. Each developer needs to download them locally.
+
+### Step 2: Build the App
+
+#### macOS
+
+```bash
+npm run tauri:build
+```
+
+Outputs:
+- App bundle: `src-tauri/target/release/bundle/macos/clipforge.app`
+- DMG installer: `src-tauri/target/release/bundle/dmg/clipforge_0.1.0_aarch64.dmg`
+
+#### Windows
+
+**Note:** Cross-compilation from macOS to Windows is not officially supported by Tauri. You have two options:
+
+1. **Build on a Windows machine** - Run the same build command on Windows
+2. **Use CI/CD** - Set up GitHub Actions to build for all platforms automatically
+
+To build on Windows:
+```bash
+npm run tauri:build
+```
+
+Outputs:
+- Installer: `src-tauri/target/release/bundle/msi/clipforge_0.1.0_x64.msi`
+- Portable exe: `src-tauri/target/release/clipforge.exe`
+
+### Testing Production Builds
+
+**macOS:**
+```bash
+open src-tauri/target/release/bundle/macos/clipforge.app
+```
+
+**Windows:**
+Run the installer or portable `.exe` file
+
+See [BUILDING.md](BUILDING.md) for detailed build instructions and troubleshooting.
+
 ## Recommended IDE Setup
 
 - [VS Code](https://code.visualstudio.com/) + [Tauri](https://marketplace.visualstudio.com/items?itemName=tauri-apps.tauri-vscode) + [rust-analyzer](https://marketplace.visualstudio.com/items?itemName=rust-lang.rust-analyzer)

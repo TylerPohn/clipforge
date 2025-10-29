@@ -397,7 +397,7 @@ function RecordingDialog({ open, onClose }: RecordingDialogProps) {
                   }
                 >
                   <Typography variant="body2">
-                    <strong>First time?</strong> You'll need to grant screen recording permission.
+                    <strong>First time?</strong> You'll need to grant screen recording permission and restart the app.
                   </Typography>
                 </Alert>
               )}
@@ -405,7 +405,7 @@ function RecordingDialog({ open, onClose }: RecordingDialogProps) {
               {source === 'camera' && (
                 <Alert severity="info" sx={{ mb: 2 }}>
                   <Typography variant="body2">
-                    <strong>First time?</strong> You'll need to grant camera permission.
+                    <strong>First time?</strong> You'll need to grant camera permission and restart the app.
                   </Typography>
                 </Alert>
               )}

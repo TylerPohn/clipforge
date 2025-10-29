@@ -5,12 +5,68 @@ use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex};
 use serde::{Deserialize, Serialize};
 use base64::{Engine as _, engine::general_purpose};
+use std::path::PathBuf;
 
 // Global state to track recording processes
 lazy_static::lazy_static! {
     static ref RECORDING_PROCESS: Arc<Mutex<Option<std::process::Child>>> = Arc::new(Mutex::new(None));
     static ref CAMERA_RECORDING_PROCESS: Arc<Mutex<Option<std::process::Child>>> = Arc::new(Mutex::new(None));
     static ref SCREEN_PREVIEW_PROCESS: Arc<Mutex<Option<std::process::Child>>> = Arc::new(Mutex::new(None));
+}
+
+// Helper function to get the FFmpeg binary path
+// In dev mode, use system FFmpeg from PATH
+// In production, use bundled FFmpeg sidecar
+fn get_ffmpeg_path() -> PathBuf {
+    // Check if we're in dev mode by looking for TAURI_DEV env var
+    if std::env::var("TAURI_DEV").is_ok() {
+        // Dev mode: use system FFmpeg
+        PathBuf::from("ffmpeg")
+    } else {
+        // Production mode: look for bundled sidecar binary
+        if let Ok(exe_path) = std::env::current_exe() {
+            if let Some(exe_dir) = exe_path.parent() {
+                // Tauri places sidecar binaries in the same directory as the executable
+                #[cfg(target_os = "windows")]
+                let ffmpeg_name = "ffmpeg.exe";
+
+                #[cfg(not(target_os = "windows"))]
+                let ffmpeg_name = "ffmpeg";
+
+                let sidecar_path = exe_dir.join(ffmpeg_name);
+                if sidecar_path.exists() {
+                    return sidecar_path;
+                }
+            }
+        }
+
+        // Fallback to system FFmpeg if bundled version not found
+        PathBuf::from("ffmpeg")
+    }
+}
+
+// Helper function to get the FFprobe binary path
+fn get_ffprobe_path() -> PathBuf {
+    if std::env::var("TAURI_DEV").is_ok() {
+        PathBuf::from("ffprobe")
+    } else {
+        if let Ok(exe_path) = std::env::current_exe() {
+            if let Some(exe_dir) = exe_path.parent() {
+                #[cfg(target_os = "windows")]
+                let ffprobe_name = "ffprobe.exe";
+
+                #[cfg(not(target_os = "windows"))]
+                let ffprobe_name = "ffprobe";
+
+                let sidecar_path = exe_dir.join(ffprobe_name);
+                if sidecar_path.exists() {
+                    return sidecar_path;
+                }
+            }
+        }
+
+        PathBuf::from("ffprobe")
+    }
 }
 
 // Recording options structure
@@ -189,7 +245,8 @@ async fn trim_video(
 
     // FFmpeg command - don't capture stderr to avoid blocking
     println!("[trim_video] Spawning FFmpeg process (without stderr capture)...");
-    let mut child = Command::new("ffmpeg")
+    let ffmpeg_path = get_ffmpeg_path();
+    let mut child = Command::new(&ffmpeg_path)
         .args(&args)
         .spawn()
         .map_err(|e| {
@@ -302,7 +359,8 @@ async fn concatenate_clips(
 
         println!("[concatenate_clips] FFmpeg args for segment {}: {:?}", i, ffmpeg_args);
 
-        let status = Command::new("ffmpeg")
+        let ffmpeg_path = get_ffmpeg_path();
+        let status = Command::new(&ffmpeg_path)
             .args(&ffmpeg_args)
             .stdout(Stdio::null())
             .stderr(Stdio::null())
@@ -344,7 +402,8 @@ async fn concatenate_clips(
 
         println!("[concatenate_clips] Final concat args (no PiP): {:?}", concat_args);
 
-        let status = Command::new("ffmpeg")
+        let ffmpeg_path = get_ffmpeg_path();
+        let status = Command::new(&ffmpeg_path)
             .args(&concat_args)
             .stdout(Stdio::null())
             .stderr(Stdio::null())
@@ -403,7 +462,8 @@ async fn concatenate_clips(
 
     println!("[concatenate_clips] Creating temp concat (before PiP): {:?}", concat_args);
 
-    let status = Command::new("ffmpeg")
+    let ffmpeg_path = get_ffmpeg_path();
+    let status = Command::new(&ffmpeg_path)
         .args(&concat_args)
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -433,7 +493,8 @@ async fn concatenate_clips(
 
     println!("[concatenate_clips] Applying PiP overlay: {:?}", pip_args);
 
-    let status = Command::new("ffmpeg")
+    let ffmpeg_path = get_ffmpeg_path();
+    let status = Command::new(&ffmpeg_path)
         .args(&pip_args)
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -500,7 +561,8 @@ fn get_video_metadata(video_path: String) -> Result<String, String> {
     use std::process::Command;
 
     // Run ffprobe to get video metadata as JSON
-    let output = Command::new("ffprobe")
+    let ffprobe_path = get_ffprobe_path();
+    let output = Command::new(&ffprobe_path)
         .args(&[
             "-v", "quiet",
             "-print_format", "json",
@@ -675,7 +737,8 @@ fn start_screen_recording(
     println!("[start_screen_recording] FFmpeg args: {:?}", args);
 
     // Start FFmpeg process with stdin pipe for graceful shutdown
-    let child = Command::new("ffmpeg")
+    let ffmpeg_path = get_ffmpeg_path();
+    let child = Command::new(&ffmpeg_path)
         .args(&args)
         .stdin(Stdio::piped())
         .stderr(Stdio::piped())
@@ -781,7 +844,8 @@ fn start_screen_preview(window: tauri::Window) -> Result<String, String> {
     println!("[start_screen_preview] FFmpeg args: {:?}", args);
 
     // Start FFmpeg process with stdout piped
-    let mut child = Command::new("ffmpeg")
+    let ffmpeg_path = get_ffmpeg_path();
+    let mut child = Command::new(&ffmpeg_path)
         .args(&args)
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
@@ -953,7 +1017,8 @@ fn start_camera_recording(
     println!("[start_camera_recording] FFmpeg args: {:?}", args);
 
     // Start FFmpeg process with stdin pipe for graceful shutdown
-    let child = Command::new("ffmpeg")
+    let ffmpeg_path = get_ffmpeg_path();
+    let child = Command::new(&ffmpeg_path)
         .args(&args)
         .stdin(Stdio::piped())
         .stderr(Stdio::piped())
@@ -1043,7 +1108,8 @@ fn get_camera_capabilities() -> Result<CameraCapabilities, String> {
 fn list_audio_video_devices() -> Result<AudioVideoDevices, String> {
     if cfg!(target_os = "windows") {
         // On Windows, use FFmpeg to list DirectShow devices
-        let output = Command::new("ffmpeg")
+        let ffmpeg_path = get_ffmpeg_path();
+        let output = Command::new(&ffmpeg_path)
             .args(&["-list_devices", "true", "-f", "dshow", "-i", "dummy"])
             .output()
             .map_err(|e| format!("Failed to run FFmpeg: {}", e))?;
@@ -1083,7 +1149,8 @@ fn list_audio_video_devices() -> Result<AudioVideoDevices, String> {
         })
     } else if cfg!(target_os = "macos") {
         // On macOS, use FFmpeg to list AVFoundation devices
-        let output = Command::new("ffmpeg")
+        let ffmpeg_path = get_ffmpeg_path();
+        let output = Command::new(&ffmpeg_path)
             .args(&["-f", "avfoundation", "-list_devices", "true", "-i", ""])
             .output()
             .map_err(|e| format!("Failed to run FFmpeg: {}", e))?;
@@ -1322,7 +1389,8 @@ async fn export_composite_video(
     println!("[export_composite_video] FFmpeg args: {:?}", args);
 
     // Execute FFmpeg
-    let mut child = Command::new("ffmpeg")
+    let ffmpeg_path = get_ffmpeg_path();
+    let mut child = Command::new(&ffmpeg_path)
         .args(&args)
         .spawn()
         .map_err(|e| {
