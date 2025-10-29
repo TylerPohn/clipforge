@@ -11,7 +11,11 @@ import {
   Stack,
   CircularProgress,
   ToggleButtonGroup,
-  ToggleButton
+  ToggleButton,
+  FormControl,
+  InputLabel,
+  Select,
+  MenuItem
 } from '@mui/material';
 import {
   FiberManualRecord,
@@ -40,6 +44,9 @@ function RecordingDialog({ open, onClose }: RecordingDialogProps) {
   const [outputPath, setOutputPath] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [showPermissionHelper, setShowPermissionHelper] = useState(false);
+  const [audioDevices, setAudioDevices] = useState<string[]>([]);
+  const [selectedAudioDevice, setSelectedAudioDevice] = useState<string>('');
+  const [isWindows, setIsWindows] = useState(false);
 
   const setVideo = useVideoStore((state) => state.setVideo);
   const selectedResolution = useVideoStore((state) => state.selectedResolution);
@@ -49,6 +56,43 @@ function RecordingDialog({ open, onClose }: RecordingDialogProps) {
 
   const { sourceResolution: screenResolution } = useRecordingResolution('screen');
   const { sourceResolution: cameraResolution } = useRecordingResolution('camera');
+
+  // Detect platform and fetch devices
+  useEffect(() => {
+    const detectPlatform = async () => {
+      try {
+        // Detect if we're on Windows
+        const platform = navigator.platform.toLowerCase();
+        setIsWindows(platform.includes('win'));
+      } catch (err) {
+        console.error('Failed to detect platform:', err);
+      }
+    };
+
+    detectPlatform();
+  }, []);
+
+  // Fetch available audio/video devices when dialog opens and camera source is selected
+  useEffect(() => {
+    if (!open || source !== 'camera' || !isWindows) return;
+
+    const fetchDevices = async () => {
+      try {
+        const devices = await invoke<{ video_devices: string[], audio_devices: string[] }>(
+          'list_audio_video_devices'
+        );
+        setAudioDevices(devices.audio_devices);
+        // Auto-select first device if available
+        if (devices.audio_devices.length > 0 && !selectedAudioDevice) {
+          setSelectedAudioDevice(devices.audio_devices[0]);
+        }
+      } catch (err) {
+        console.error('Failed to fetch devices:', err);
+      }
+    };
+
+    fetchDevices();
+  }, [open, source, isWindows]);
 
   // Update store when resolutions are loaded
   useEffect(() => {
@@ -92,11 +136,16 @@ function RecordingDialog({ open, onClose }: RecordingDialogProps) {
       setOutputPath(tempPath);
 
       // Prepare recording options
-      const recordingOptions = {
+      const recordingOptions: any = {
         resolution: selectedResolution,
         source_width: source === 'screen' ? screenResolution?.width : cameraResolution?.width,
         source_height: source === 'screen' ? screenResolution?.height : cameraResolution?.height,
       };
+
+      // Add audio device for camera recording on Windows
+      if (source === 'camera' && isWindows && selectedAudioDevice) {
+        recordingOptions.audio_device = selectedAudioDevice;
+      }
 
       // Start recording based on source
       if (source === 'screen') {
@@ -234,6 +283,28 @@ function RecordingDialog({ open, onClose }: RecordingDialogProps) {
               {/* Camera Preview */}
               {source === 'camera' && (
                 <CameraPreview isActive={true} isRecording={false} />
+              )}
+
+              {/* Microphone Selection (Windows only, Camera source only) */}
+              {source === 'camera' && isWindows && audioDevices.length > 0 && (
+                <Box sx={{ mb: 3, mt: 3 }}>
+                  <FormControl fullWidth>
+                    <InputLabel id="microphone-select-label">Microphone</InputLabel>
+                    <Select
+                      labelId="microphone-select-label"
+                      id="microphone-select"
+                      value={selectedAudioDevice}
+                      label="Microphone"
+                      onChange={(e) => setSelectedAudioDevice(e.target.value)}
+                    >
+                      {audioDevices.map((device) => (
+                        <MenuItem key={device} value={device}>
+                          {device}
+                        </MenuItem>
+                      ))}
+                    </Select>
+                  </FormControl>
+                </Box>
               )}
 
               {/* Resolution Selector */}

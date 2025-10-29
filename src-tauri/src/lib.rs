@@ -18,6 +18,8 @@ struct RecordingOptions {
     source_width: Option<i32>,
     #[serde(default)]
     source_height: Option<i32>,
+    #[serde(default)]
+    audio_device: Option<String>, // Optional audio device name (Windows only)
 }
 
 #[derive(Debug, Serialize)]
@@ -31,6 +33,12 @@ struct CameraCapabilities {
     native_width: i32,
     native_height: i32,
     supported_resolutions: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct AudioVideoDevices {
+    video_devices: Vec<String>,
+    audio_devices: Vec<String>,
 }
 
 #[tauri::command]
@@ -440,6 +448,7 @@ fn start_screen_recording(
         resolution: "720p".to_string(),
         source_width: None,
         source_height: None,
+        audio_device: None,
     });
 
     // Determine resolution and bitrate
@@ -567,6 +576,7 @@ fn start_camera_recording(
         resolution: "720p".to_string(),
         source_width: None,
         source_height: None,
+        audio_device: None,
     });
 
     // Determine resolution and bitrate
@@ -587,30 +597,54 @@ fn start_camera_recording(
 
     // Platform-specific FFmpeg arguments for camera
     let resolution_str = format!("{}x{}", width, height);
+
+    // Prepare Windows input string (if needed) before args to ensure proper lifetime
+    let windows_input_str = if cfg!(target_os = "windows") {
+        if let Some(audio_dev) = &opts.audio_device {
+            format!("video=Integrated Camera:audio={}", audio_dev)
+        } else {
+            "video=Integrated Camera".to_string()
+        }
+    } else {
+        String::new()
+    };
+
     let args = if cfg!(target_os = "macos") {
         vec![
             "-f", "avfoundation",
             "-framerate", "30",
             "-video_size", &resolution_str,
-            "-i", "0",              // Camera device (0 = default camera)
+            "-i", "0:0",            // Camera device (0 = default camera, 0 = default microphone)
             "-pix_fmt", "yuv420p",
             "-c:v", "libx264",
             "-preset", "ultrafast",
             "-b:v", bitrate,
+            "-c:a", "aac",          // Audio codec
+            "-b:a", "192k",         // Audio bitrate
             &output_path
         ]
     } else if cfg!(target_os = "windows") {
-        vec![
+        let mut args = vec![
             "-f", "dshow",
             "-framerate", "30",
             "-video_size", &resolution_str,
-            "-i", "video=Integrated Camera",
+            "-i", &windows_input_str,
             "-pix_fmt", "yuv420p",
             "-c:v", "libx264",
             "-preset", "ultrafast",
             "-b:v", bitrate,
-            &output_path
-        ]
+        ];
+
+        // Add audio codec parameters if audio device is provided
+        if opts.audio_device.is_some() {
+            args.push("-c:a");
+            args.push("aac");
+            args.push("-b:a");
+            args.push("192k");
+        }
+
+        args.push(&output_path);
+        args
     } else {
         return Err("Unsupported platform".to_string());
     };
@@ -702,6 +736,95 @@ fn get_camera_capabilities() -> Result<CameraCapabilities, String> {
         native_height: 1080,
         supported_resolutions: vec!["720p".to_string(), "1080p".to_string(), "source".to_string()],
     })
+}
+
+#[tauri::command]
+fn list_audio_video_devices() -> Result<AudioVideoDevices, String> {
+    if cfg!(target_os = "windows") {
+        // On Windows, use FFmpeg to list DirectShow devices
+        let output = Command::new("ffmpeg")
+            .args(&["-list_devices", "true", "-f", "dshow", "-i", "dummy"])
+            .output()
+            .map_err(|e| format!("Failed to run FFmpeg: {}", e))?;
+
+        // FFmpeg outputs device list to stderr
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let mut video_devices = Vec::new();
+        let mut audio_devices = Vec::new();
+        let mut in_video_section = false;
+        let mut in_audio_section = false;
+
+        for line in stderr.lines() {
+            if line.contains("DirectShow video devices") {
+                in_video_section = true;
+                in_audio_section = false;
+            } else if line.contains("DirectShow audio devices") {
+                in_video_section = false;
+                in_audio_section = true;
+            } else if line.starts_with("[dshow") && line.contains("\"") {
+                // Extract device name from lines like: [dshow @ ...] "Device Name"
+                if let Some(start) = line.find('"') {
+                    if let Some(end) = line[start + 1..].find('"') {
+                        let device_name = &line[start + 1..start + 1 + end];
+                        if in_video_section {
+                            video_devices.push(device_name.to_string());
+                        } else if in_audio_section {
+                            audio_devices.push(device_name.to_string());
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(AudioVideoDevices {
+            video_devices,
+            audio_devices,
+        })
+    } else if cfg!(target_os = "macos") {
+        // On macOS, use FFmpeg to list AVFoundation devices
+        let output = Command::new("ffmpeg")
+            .args(&["-f", "avfoundation", "-list_devices", "true", "-i", ""])
+            .output()
+            .map_err(|e| format!("Failed to run FFmpeg: {}", e))?;
+
+        // FFmpeg outputs device list to stderr
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let mut video_devices = Vec::new();
+        let mut audio_devices = Vec::new();
+
+        for line in stderr.lines() {
+            if line.contains("[AVFoundation") && line.contains("]") {
+                // Extract device info from lines like: [AVFoundation indev @ ...] [0] FaceTime HD Camera
+                // Find the first closing bracket, then look for the second opening bracket
+                if let Some(first_close) = line.find(']') {
+                    let remaining = &line[first_close + 1..];
+                    if let Some(second_open) = remaining.find('[') {
+                        if let Some(second_close) = remaining[second_open..].find(']') {
+                            // Device name is after the second closing bracket
+                            let device_start = first_close + 1 + second_open + second_close + 1;
+                            if device_start < line.len() {
+                                let device_name = line[device_start..].trim();
+                                if !device_name.is_empty() {
+                                    if line.contains("video device") || !line.contains("audio device") {
+                                        video_devices.push(device_name.to_string());
+                                    } else if line.contains("audio device") {
+                                        audio_devices.push(device_name.to_string());
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(AudioVideoDevices {
+            video_devices,
+            audio_devices,
+        })
+    } else {
+        Err("Unsupported platform".to_string())
+    }
 }
 
 #[tauri::command]
@@ -986,6 +1109,7 @@ pub fn run() {
             is_camera_recording,
             get_screen_resolution,
             get_camera_capabilities,
+            list_audio_video_devices,
             move_file,
             delete_file,
             export_composite_video
