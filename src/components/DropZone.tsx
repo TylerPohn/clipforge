@@ -10,14 +10,13 @@ interface DropZoneProps {
 
 // Global flag to prevent duplicate listener setup
 let globalListenerSetup = false;
-let globalUnlisten: (() => void) | null = null;
+let _globalUnlisten: (() => void) | null = null;
 
 // Track recently processed files to prevent duplicates
 const recentlyProcessed = new Map<string, number>();
 const DUPLICATE_WINDOW_MS = 1000; // 1 second window to catch duplicates
 
 function DropZone({ children }: DropZoneProps) {
-  const [isDragging, setIsDragging] = useState(false);
   const clips = useVideoStore((state) => state.clips);
 
   useEffect(() => {
@@ -36,7 +35,7 @@ function DropZone({ children }: DropZoneProps) {
         const currentWindow = getCurrentWindow();
 
         // Listen for file drop events
-        globalUnlisten = await currentWindow.onDragDropEvent((event: any) => {
+        _globalUnlisten = await currentWindow.onDragDropEvent((event: any) => {
           console.log('[DropZone] Drag drop event:', event);
 
           if (event.payload.type === 'over') {
@@ -137,12 +136,12 @@ function DropZone({ children }: DropZoneProps) {
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
-        elevation={isDragging ? 8 : 2}
+        elevation={2}
         sx={{
           p: 6,
           textAlign: 'center',
-          backgroundColor: isDragging ? 'primary.dark' : 'background.paper',
-          border: `2px dashed ${isDragging ? '#00bcd4' : 'rgba(255, 255, 255, 0.23)'}`,
+          backgroundColor: 'background.paper',
+          border: '2px dashed rgba(255, 255, 255, 0.23)',
           transition: 'all 0.3s ease',
           minWidth: 400,
           cursor: 'pointer',
@@ -150,7 +149,7 @@ function DropZone({ children }: DropZoneProps) {
       >
         <CloudUpload sx={{ fontSize: 64, color: 'text.secondary', mb: 2 }} />
         <Typography variant="h5" gutterBottom>
-          {isDragging ? 'Drop video here' : 'Import a video'}
+          Import a video
         </Typography>
         <Typography variant="body2" color="text.secondary">
           Drag and drop an MP4 or MOV file, or use the Import button

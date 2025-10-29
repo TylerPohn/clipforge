@@ -869,7 +869,18 @@ export const useVideoStore = create<VideoState>((set, get) => ({
 
     console.log('[VideoStore] Setting PiP track from clip:', clipId, 'position:', defaultPosition);
 
-    set({ pipTrack });
+    // Remove the clip from the main timeline since it's now a PiP overlay
+    const updatedClips = state.clips.filter(c => c.id !== clipId);
+    const recalculatedClips = recalculateStartTimes(updatedClips);
+    const totalDuration = calculateTotalDuration(recalculatedClips);
+
+    console.log('[VideoStore] Removed clip from main timeline, new duration:', totalDuration);
+
+    set({
+      pipTrack,
+      clips: recalculatedClips,
+      videoDuration: totalDuration
+    });
   },
 
   updatePipTrackProperty: <K extends keyof Track>(property: K, value: Track[K]) => {
@@ -1033,8 +1044,36 @@ export const useVideoStore = create<VideoState>((set, get) => ({
       return;
     }
 
-    console.log('[VideoStore] Removing PiP track');
+    console.log('[VideoStore] Removing PiP track and restoring clip to timeline');
 
-    set({ pipTrack: null });
+    // Reconstruct the clip from pipTrack data and add it back to the timeline
+    const pipClip = state.pipTrack;
+    const clipToRestore: Clip = {
+      id: pipClip.clipData.id,
+      path: pipClip.clipData.path,
+      name: pipClip.clipData.name,
+      duration: pipClip.clipData.duration / 1000, // Convert from milliseconds to seconds
+      resolution: {
+        width: pipClip.clipData.width,
+        height: pipClip.clipData.height
+      },
+      trimStart: 0,
+      trimEnd: pipClip.clipData.duration / 1000,
+      startTimeInSequence: 0, // Will be recalculated
+      blobUrl: null // Will be re-loaded if needed
+    };
+
+    // Add clip back to the end of the timeline
+    const updatedClips = [...state.clips, clipToRestore];
+    const recalculatedClips = recalculateStartTimes(updatedClips);
+    const totalDuration = calculateTotalDuration(recalculatedClips);
+
+    console.log('[VideoStore] Restored clip to timeline at end, new duration:', totalDuration);
+
+    set({
+      pipTrack: null,
+      clips: recalculatedClips,
+      videoDuration: totalDuration
+    });
   },
 }));

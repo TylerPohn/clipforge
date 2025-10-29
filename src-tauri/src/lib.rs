@@ -1,13 +1,16 @@
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 use tauri_plugin_dialog::DialogExt;
+use tauri::Emitter;
 use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex};
 use serde::{Deserialize, Serialize};
+use base64::{Engine as _, engine::general_purpose};
 
 // Global state to track recording processes
 lazy_static::lazy_static! {
     static ref RECORDING_PROCESS: Arc<Mutex<Option<std::process::Child>>> = Arc::new(Mutex::new(None));
     static ref CAMERA_RECORDING_PROCESS: Arc<Mutex<Option<std::process::Child>>> = Arc::new(Mutex::new(None));
+    static ref SCREEN_PREVIEW_PROCESS: Arc<Mutex<Option<std::process::Child>>> = Arc::new(Mutex::new(None));
 }
 
 // Recording options structure
@@ -571,33 +574,100 @@ fn start_screen_recording(
     };
 
     println!("[start_screen_recording] Resolution: {}x{} @ {} bitrate", width, height, bitrate);
+    if opts.audio_device.is_some() {
+        println!("[start_screen_recording] Audio device: {:?}", opts.audio_device);
+    }
 
     // Platform-specific FFmpeg arguments
     let scale_filter = format!("scale={}:{}", width, height);
+
+    // Prepare Windows input string (if needed) before args to ensure proper lifetime
+    let windows_audio_input = if cfg!(target_os = "windows") {
+        if let Some(audio_dev) = &opts.audio_device {
+            format!("audio={}", audio_dev)
+        } else {
+            String::new()
+        }
+    } else {
+        String::new()
+    };
+
     let args = if cfg!(target_os = "macos") {
-        vec![
-            "-f", "avfoundation",
-            "-framerate", "30",
-            "-i", "1",              // Screen capture (1 = main display)
-            "-vf", &scale_filter,
-            "-pix_fmt", "yuv420p",
-            "-c:v", "libx264",
-            "-preset", "ultrafast",
-            "-b:v", bitrate,
-            &output_path
-        ]
+        // macOS: avfoundation supports audio input
+        // Format: "1:0" means screen device 1, audio device 0 (default microphone)
+        let mut args = vec![
+            "-f".to_string(), "avfoundation".to_string(),
+            "-framerate".to_string(), "30".to_string(),
+        ];
+
+        if opts.audio_device.is_some() {
+            // Include audio: screen (1) and microphone (0)
+            args.push("-i".to_string());
+            args.push("1:0".to_string());
+        } else {
+            // Video only
+            args.push("-i".to_string());
+            args.push("1".to_string());
+        }
+
+        args.push("-vf".to_string());
+        args.push(scale_filter.clone());
+        args.push("-pix_fmt".to_string());
+        args.push("yuv420p".to_string());
+        args.push("-c:v".to_string());
+        args.push("libx264".to_string());
+        args.push("-preset".to_string());
+        args.push("ultrafast".to_string());
+        args.push("-b:v".to_string());
+        args.push(bitrate.to_string());
+
+        // Add audio encoding if audio device is specified
+        if opts.audio_device.is_some() {
+            args.push("-c:a".to_string());
+            args.push("aac".to_string());
+            args.push("-b:a".to_string());
+            args.push("192k".to_string());
+        }
+
+        args.push(output_path.clone());
+        args
     } else if cfg!(target_os = "windows") {
-        vec![
-            "-f", "gdigrab",
-            "-framerate", "30",
-            "-i", "desktop",
-            "-vf", &scale_filter,
-            "-pix_fmt", "yuv420p",
-            "-c:v", "libx264",
-            "-preset", "ultrafast",
-            "-b:v", bitrate,
-            &output_path
-        ]
+        // Windows: Use gdigrab for screen + dshow for audio (if specified)
+        let mut args = vec![
+            "-f".to_string(), "gdigrab".to_string(),
+            "-framerate".to_string(), "30".to_string(),
+            "-i".to_string(), "desktop".to_string(),
+        ];
+
+        // Add audio input if specified
+        if let Some(_) = &opts.audio_device {
+            args.push("-f".to_string());
+            args.push("dshow".to_string());
+            args.push("-i".to_string());
+            args.push(windows_audio_input.clone());
+        }
+
+        args.push("-vf".to_string());
+        args.push(scale_filter.clone());
+        args.push("-pix_fmt".to_string());
+        args.push("yuv420p".to_string());
+        args.push("-c:v".to_string());
+        args.push("libx264".to_string());
+        args.push("-preset".to_string());
+        args.push("ultrafast".to_string());
+        args.push("-b:v".to_string());
+        args.push(bitrate.to_string());
+
+        // Add audio encoding if audio device is specified
+        if opts.audio_device.is_some() {
+            args.push("-c:a".to_string());
+            args.push("aac".to_string());
+            args.push("-b:a".to_string());
+            args.push("192k".to_string());
+        }
+
+        args.push(output_path.clone());
+        args
     } else {
         return Err("Unsupported platform".to_string());
     };
@@ -665,6 +735,132 @@ fn stop_screen_recording() -> Result<String, String> {
 fn is_recording() -> bool {
     let process = RECORDING_PROCESS.lock().unwrap();
     process.is_some()
+}
+
+#[tauri::command]
+fn start_screen_preview(window: tauri::Window) -> Result<String, String> {
+    use std::io::Read;
+    use std::thread;
+
+    println!("[start_screen_preview] Starting screen preview");
+
+    // Check if preview is already running
+    let mut process = SCREEN_PREVIEW_PROCESS.lock().unwrap();
+    if process.is_some() {
+        return Err("Preview already running".to_string());
+    }
+
+    // Platform-specific FFmpeg arguments for preview
+    // Use lower quality and framerate for preview
+    let args = if cfg!(target_os = "macos") {
+        vec![
+            "-f", "avfoundation",
+            "-framerate", "15",          // Lower framerate for preview
+            "-video_size", "640x360",    // Lower resolution for preview
+            "-i", "1",                    // Screen capture (1 = main display)
+            "-f", "image2pipe",
+            "-vcodec", "mjpeg",
+            "-q:v", "10",                 // JPEG quality (2-31, lower is better)
+            "-"                           // Output to stdout
+        ]
+    } else if cfg!(target_os = "windows") {
+        vec![
+            "-f", "gdigrab",
+            "-framerate", "15",
+            "-video_size", "640x360",
+            "-i", "desktop",
+            "-f", "image2pipe",
+            "-vcodec", "mjpeg",
+            "-q:v", "10",
+            "-"
+        ]
+    } else {
+        return Err("Unsupported platform".to_string());
+    };
+
+    println!("[start_screen_preview] FFmpeg args: {:?}", args);
+
+    // Start FFmpeg process with stdout piped
+    let mut child = Command::new("ffmpeg")
+        .args(&args)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|e| format!("Failed to start preview: {}", e))?;
+
+    // Get stdout handle
+    let mut stdout = child.stdout.take()
+        .ok_or("Failed to get stdout")?;
+
+    println!("[start_screen_preview] FFmpeg process started, spawning reader thread");
+
+    // Spawn a thread to read frames and emit events
+    thread::spawn(move || {
+        let mut buffer = Vec::new();
+        let mut temp_buf = [0u8; 8192];
+        let jpeg_start = [0xFF, 0xD8]; // JPEG start marker
+        let jpeg_end = [0xFF, 0xD9];   // JPEG end marker
+
+        loop {
+            match stdout.read(&mut temp_buf) {
+                Ok(0) => {
+                    println!("[start_screen_preview] EOF reached, stopping preview thread");
+                    break;
+                }
+                Ok(n) => {
+                    buffer.extend_from_slice(&temp_buf[..n]);
+
+                    // Look for complete JPEG frames
+                    while let Some(start_pos) = buffer.windows(2).position(|w| w == jpeg_start) {
+                        if start_pos > 0 {
+                            // Remove any data before the JPEG start
+                            buffer.drain(..start_pos);
+                        }
+
+                        // Look for JPEG end marker
+                        if let Some(end_pos) = buffer.windows(2).position(|w| w == jpeg_end) {
+                            // Extract complete JPEG frame (including end marker)
+                            let frame_data = buffer.drain(..(end_pos + 2)).collect::<Vec<u8>>();
+
+                            // Encode as base64 and emit event
+                            let base64_frame = general_purpose::STANDARD.encode(&frame_data);
+                            let _ = window.emit("screen-preview-frame", base64_frame);
+                        } else {
+                            // No end marker yet, wait for more data
+                            break;
+                        }
+                    }
+                }
+                Err(e) => {
+                    println!("[start_screen_preview] Error reading stdout: {}", e);
+                    break;
+                }
+            }
+        }
+    });
+
+    *process = Some(child);
+    Ok("Preview started".to_string())
+}
+
+#[tauri::command]
+fn stop_screen_preview() -> Result<String, String> {
+    println!("[stop_screen_preview] Stopping screen preview");
+
+    let mut process = SCREEN_PREVIEW_PROCESS.lock().unwrap();
+
+    if let Some(mut child) = process.take() {
+        child.kill()
+            .map_err(|e| format!("Failed to stop preview: {}", e))?;
+
+        child.wait()
+            .map_err(|e| format!("Failed to wait for preview: {}", e))?;
+
+        println!("[stop_screen_preview] Preview stopped successfully");
+        Ok("Preview stopped".to_string())
+    } else {
+        Err("No preview running".to_string())
+    }
 }
 
 #[tauri::command]
@@ -1209,6 +1405,8 @@ pub fn run() {
             start_screen_recording,
             stop_screen_recording,
             is_recording,
+            start_screen_preview,
+            stop_screen_preview,
             start_camera_recording,
             stop_camera_recording,
             is_camera_recording,

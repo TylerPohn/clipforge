@@ -15,19 +15,24 @@ import {
   FormControl,
   InputLabel,
   Select,
-  MenuItem
+  MenuItem,
+  IconButton,
+  Tooltip
 } from '@mui/material';
 import {
   FiberManualRecord,
   Stop,
   Videocam,
-  DesktopWindows
+  DesktopWindows,
+  Mic,
+  MicOff
 } from '@mui/icons-material';
 import { invoke } from '@tauri-apps/api/core';
 import { useVideoStore } from '../store/videoStore';
 import { useRecordingResolution } from '../hooks/useRecordingResolution';
 import PermissionHelper from './PermissionHelper';
 import CameraPreview from './CameraPreview';
+import ScreenPreview from './ScreenPreview';
 import ResolutionSelector from './ResolutionSelector';
 
 interface RecordingDialogProps {
@@ -47,6 +52,7 @@ function RecordingDialog({ open, onClose }: RecordingDialogProps) {
   const [audioDevices, setAudioDevices] = useState<string[]>([]);
   const [selectedAudioDevice, setSelectedAudioDevice] = useState<string>('');
   const [isWindows, setIsWindows] = useState(false);
+  const [enableMicrophone, setEnableMicrophone] = useState(false);
 
   const addClip = useVideoStore((state) => state.addClip);
   const selectedResolution = useVideoStore((state) => state.selectedResolution);
@@ -72,9 +78,15 @@ function RecordingDialog({ open, onClose }: RecordingDialogProps) {
     detectPlatform();
   }, []);
 
-  // Fetch available audio/video devices when dialog opens and camera source is selected
+  // Fetch available audio/video devices when dialog opens (for both camera and screen with mic)
   useEffect(() => {
-    if (!open || source !== 'camera' || !isWindows) return;
+    if (!open) return;
+
+    // Only fetch for Windows (it needs device selection)
+    // For camera: always fetch
+    // For screen: only fetch if microphone is enabled
+    const shouldFetch = isWindows && (source === 'camera' || (source === 'screen' && enableMicrophone));
+    if (!shouldFetch) return;
 
     const fetchDevices = async () => {
       try {
@@ -92,7 +104,7 @@ function RecordingDialog({ open, onClose }: RecordingDialogProps) {
     };
 
     fetchDevices();
-  }, [open, source, isWindows]);
+  }, [open, source, isWindows, enableMicrophone]);
 
   // Update store when resolutions are loaded
   useEffect(() => {
@@ -145,6 +157,12 @@ function RecordingDialog({ open, onClose }: RecordingDialogProps) {
       // Add audio device for camera recording on Windows
       if (source === 'camera' && isWindows && selectedAudioDevice) {
         recordingOptions.audio_device = selectedAudioDevice;
+      }
+
+      // Add audio device for screen recording with microphone enabled
+      if (source === 'screen' && enableMicrophone) {
+        // For Windows, use the selected device; for macOS, just indicate we want audio (will use default)
+        recordingOptions.audio_device = isWindows ? selectedAudioDevice : 'default';
       }
 
       // Start recording based on source
@@ -285,6 +303,54 @@ function RecordingDialog({ open, onClose }: RecordingDialogProps) {
                 <CameraPreview isActive={true} isRecording={false} />
               )}
 
+              {/* Screen Preview */}
+              {source === 'screen' && (
+                <ScreenPreview isActive={true} isRecording={false} />
+              )}
+
+              {/* Microphone Enable (Screen source) */}
+              {source === 'screen' && (
+                <Box sx={{ mb: 2, mt: 2, display: 'flex', alignItems: 'center', gap: 1 }}>
+                  <Tooltip title={enableMicrophone ? 'Disable Microphone' : 'Enable Microphone'}>
+                    <IconButton
+                      onClick={() => setEnableMicrophone(!enableMicrophone)}
+                      color={enableMicrophone ? 'primary' : 'default'}
+                      sx={{
+                        border: enableMicrophone ? 2 : 1,
+                        borderColor: enableMicrophone ? 'primary.main' : 'divider'
+                      }}
+                    >
+                      {enableMicrophone ? <Mic /> : <MicOff />}
+                    </IconButton>
+                  </Tooltip>
+                  <Typography variant="body2" color={enableMicrophone ? 'text.primary' : 'text.secondary'}>
+                    {enableMicrophone ? 'Recording Microphone Audio' : 'No Microphone Audio'}
+                  </Typography>
+                </Box>
+              )}
+
+              {/* Microphone Selection (Windows only, Screen source with mic enabled) */}
+              {source === 'screen' && isWindows && enableMicrophone && audioDevices.length > 0 && (
+                <Box sx={{ mb: 3, mt: 1 }}>
+                  <FormControl fullWidth>
+                    <InputLabel id="screen-microphone-select-label">Microphone</InputLabel>
+                    <Select
+                      labelId="screen-microphone-select-label"
+                      id="screen-microphone-select"
+                      value={selectedAudioDevice}
+                      label="Microphone"
+                      onChange={(e) => setSelectedAudioDevice(e.target.value)}
+                    >
+                      {audioDevices.map((device) => (
+                        <MenuItem key={device} value={device}>
+                          {device}
+                        </MenuItem>
+                      ))}
+                    </Select>
+                  </FormControl>
+                </Box>
+              )}
+
               {/* Microphone Selection (Windows only, Camera source only) */}
               {source === 'camera' && isWindows && audioDevices.length > 0 && (
                 <Box sx={{ mb: 3, mt: 3 }}>
@@ -357,6 +423,13 @@ function RecordingDialog({ open, onClose }: RecordingDialogProps) {
               {source === 'camera' && (
                 <Box sx={{ mb: 2 }}>
                   <CameraPreview isActive={true} isRecording={true} />
+                </Box>
+              )}
+
+              {/* Screen Preview During Recording */}
+              {source === 'screen' && (
+                <Box sx={{ mb: 2 }}>
+                  <ScreenPreview isActive={true} isRecording={true} />
                 </Box>
               )}
 
