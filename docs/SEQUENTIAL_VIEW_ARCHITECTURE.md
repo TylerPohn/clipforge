@@ -1,7 +1,7 @@
 # ClipForge Sequential View Architecture
 
 **Last Updated:** 2025-10-29
-**Version:** Current Implementation Analysis
+**Version:** Current Implementation with Timeline Enhancements
 
 This document provides a comprehensive technical profile of how media clips are imported, processed, and rendered in ClipForge's sequential view timeline.
 
@@ -18,8 +18,9 @@ This document provides a comprehensive technical profile of how media clips are 
 7. [Key Components Deep Dive](#key-components-deep-dive)
 8. [Video Loading Pipeline](#video-loading-pipeline)
 9. [Timeline Rendering](#timeline-rendering)
-10. [Playback System](#playback-system)
-11. [Important Code Paths](#important-code-paths)
+10. [Timeline Interactions](#timeline-interactions)
+11. [Playback System](#playback-system)
+12. [Important Code Paths](#important-code-paths)
 
 ---
 
@@ -881,6 +882,303 @@ Location: videoStore.ts:235-275
 **UI Feedback:**
 - TimelineRuler prevents dragging trim handles too close
 - Split button disabled if too close to clip edges
+
+---
+
+## Timeline Interactions
+
+### Media Library System
+
+**Concept:** Imported clips appear in a Media Library section before being added to the timeline, enabling clip reuse and non-destructive workflow.
+
+**State Structure:**
+```typescript
+interface VideoState {
+  mediaLibrary: Clip[]  // Imported clips (not in timeline)
+  clips: Clip[]          // Timeline clips (in playback sequence)
+}
+```
+
+**Workflow:**
+1. **Import:** Files added to `mediaLibrary` via import/record/drop
+2. **Add to Timeline:** User manually adds library clips to timeline
+3. **Reuse:** Same library clip can be added to timeline multiple times
+4. **Delete Cascade:** Removing library clip removes all timeline instances
+
+**Store Methods:**
+```typescript
+addClipToLibrary(path: string, name: string): string
+  Location: videoStore.ts:459-474
+  Returns: clipId
+  Creates clip in mediaLibrary only (not timeline)
+
+addClipToTimeline(clipId: string, position?: 'start' | 'end'): void
+  Location: videoStore.ts:493-533
+  Copies library clip to timeline at specified position
+
+removeClipFromLibrary(clipId: string): void
+  Location: videoStore.ts:476-505
+  Cascade deletes: Removes from library + all timeline instances
+```
+
+### Drag-and-Drop from Media to Timeline
+
+**Features:**
+- Drag media library clips to timeline main track or PiP track
+- Visual feedback: preview line, zone highlighting, time tooltip
+- Copy behavior: clips remain in library for reuse
+
+**Implementation:**
+```typescript
+// Media Panel: Make clips draggable
+<Box
+  draggable={true}
+  onDragStart={handleDragStart}
+>
+  {/* Clip card */}
+</Box>
+
+// Timeline Ruler: Drop zones
+<Box
+  onDragOver={handleDragOver}  // Show preview
+  onDrop={handleDrop}            // Add clip
+>
+  {/* Canvas timeline */}
+</Box>
+```
+
+**Drop Behavior:**
+- **Main Track:** Sequential insertion at drop time
+- **PiP Track:** Sets as PiP overlay with offset = drop time
+
+### Timeline Clip Operations
+
+#### Hover Actions
+
+**Hover UI:** When mouse hovers over timeline clip, two buttons appear:
+
+```typescript
+// Edit/Trim Button (Blue → Gold when active)
+<IconButton onClick={() => setTrimModeClipId(clipId)}>
+  <EditIcon />
+</IconButton>
+Location: TimelineRuler.tsx:738-776
+
+// Delete Button (Red)
+<IconButton onClick={() => removeClip(clipId)}>
+  <DeleteIcon />
+</IconButton>
+Location: TimelineRuler.tsx:778-814
+```
+
+**Button Positions:**
+- Edit button: `right - 48px` from clip end
+- Delete button: `right - 20px` from clip end
+
+#### Trim Mode
+
+**UX Flow:**
+1. User hovers over clip → Edit button appears (blue)
+2. Click edit button → Trim mode enables:
+   - Button turns gold
+   - Gold trim handles appear on clip edges
+3. Drag trim handles to adjust clip boundaries
+4. Click edit button again → Trim mode exits
+
+**Technical Implementation:**
+```typescript
+const [trimModeClipId, setTrimModeClipId] = useState<string | null>(null);
+
+// Only show trim handles for clip in trim mode
+if (trimModeClipId === clip.id) {
+  ctx.fillStyle = '#ffd700';
+  ctx.fillRect(clipStartX - 2, 0, 4, mainTrackHeight);  // Left handle
+  ctx.fillRect(clipEndX - 2, 0, 4, mainTrackHeight);    // Right handle
+}
+```
+Location: TimelineRuler.tsx:128-136
+
+**Benefits:**
+- Clean timeline (no visual clutter until needed)
+- Intentional editing (explicit trim mode activation)
+- No accidental trims during reordering
+
+#### Clip Reordering
+
+**UX:** Drag clip body (not edges) to reorder within timeline
+
+**Implementation:**
+```typescript
+// Capture initial grab offset
+const offsetX = x - clipStartX;
+setIsDragging({
+  type: 'clip-reorder',
+  clipId: clip.id,
+  originalIndex: index,
+  dragX: x,
+  offsetX  // Offset from clip start
+});
+
+// Draw preview at correct position
+const previewStartX = isDragging.dragX - isDragging.offsetX;
+ctx.fillRect(previewStartX, 0, clipWidth, mainTrackHeight);
+```
+Location: TimelineRuler.tsx:347-351, 228-239
+
+**Preview Accuracy:**
+- Tracks offset from where user grabbed
+- Preview matches actual clip boundaries during drag
+- Snap to final position on mouse release
+
+#### PiP Track Repositioning
+
+**UX:** Drag PiP track in timeline to change start/offset time
+
+**Implementation:**
+```typescript
+// Capture offset (same as clip reorder)
+const offsetX = x - pipStartX;
+setIsDragging({ type: 'pip-move', dragX: x, offsetX });
+
+// Calculate new offset on drop
+const previewStartX = isDragging.dragX - isDragging.offsetX;
+const newOffsetSeconds = (previewStartX / rect.width) * videoDuration;
+updatePipTrackOffset(newOffsetSeconds * 1000);
+```
+Location: TimelineRuler.tsx:335-337, 498-504
+
+### Playhead Controls
+
+#### Priority Handling
+
+**Mouse Detection Order:**
+1. Trim handles (highest priority, 10px threshold)
+2. **Playhead (15px threshold) - prioritized for easy grabbing**
+3. PiP track dragging
+4. Clip body reordering
+5. Timeline seek
+
+```typescript
+// Playhead checked BEFORE clip bodies
+const playheadX = (currentTime / videoDuration) * rect.width;
+const playheadThreshold = 15;  // Larger for easier grabbing
+
+if (Math.abs(x - playheadX) < playheadThreshold) {
+  setIsDragging({ type: 'playhead' });
+  return;  // Exit early
+}
+```
+Location: TimelineRuler.tsx:308-315
+
+**Why Playhead First:**
+- Prevents accidental clip grabs when seeking
+- Larger threshold (15px) for better UX
+
+#### Reset Button
+
+**Feature:** Button in timeline header resets playhead to start (0:00)
+
+```typescript
+<IconButton onClick={() => setCurrentTime(0)}>
+  <RestartAltIcon />
+</IconButton>
+```
+Location: TimelineRuler.tsx:627-644
+
+**Visual Feedback:**
+- Opacity: 0.3 when at start, 0.7 when moved
+- Tooltip: "Reset playhead to start"
+
+### Playhead Position Management
+
+**Problem:** After reordering clips, playhead could end up in invalid position (past clip end)
+
+**Solution:** Validate and reset playhead when clips reorder
+
+```typescript
+reorderClip: (clipId, newIndex) => {
+  // ... reorder clips ...
+
+  // Check if playhead is still within a valid clip
+  let foundValidClip = false;
+  for (const clip of recalculatedClips) {
+    const clipEndTime = clip.startTimeInSequence + trimmedDuration;
+    if (currentTime >= clip.startTimeInSequence && currentTime < clipEndTime) {
+      foundValidClip = true;
+      break;
+    }
+  }
+
+  // If invalid, reset to 0
+  if (!foundValidClip) {
+    newCurrentTime = 0;
+  }
+
+  set({ clips, videoDuration, currentTime: newCurrentTime });
+}
+```
+Location: videoStore.ts:453-511
+
+**Scenarios:**
+- Playhead at 0:07 in Clip 2
+- Split Clip 2 and move second part to beginning
+- Playhead position 0:07 now invalid → Reset to 0:00
+- Reset button always works correctly
+
+### Split Clip Behavior
+
+**Media Library Integration:**
+When splitting a timeline clip, the corresponding library clip is also split into two clips:
+
+```typescript
+splitClipAtTime: (clipId, splitTime) => {
+  // Split timeline clip into clip1 and clip2
+  // ...
+
+  // Also split the library clip
+  const libraryClipIndex = mediaLibrary.findIndex(c => c.path === clip.path);
+  if (libraryClipIndex !== -1) {
+    const libClip1 = { ...libraryClip, id: newId1, trimEnd: splitPoint };
+    const libClip2 = { ...libraryClip, id: newId2, trimStart: splitPoint };
+    updatedLibrary.splice(libraryClipIndex, 1, libClip1, libClip2);
+  }
+
+  set({ clips, mediaLibrary: updatedLibrary });
+}
+```
+Location: videoStore.ts:634-683
+
+**Result:** Media panel shows two split clips for reuse
+
+### Mouse Interaction States
+
+**Drag State Type:**
+```typescript
+type DragState = {
+  type: 'clip-start' | 'clip-end' | 'playhead' | 'clip-reorder' | 'pip-move';
+  clipId?: string;
+  originalIndex?: number;
+  dragX?: number;
+  offsetX?: number;  // For accurate preview positioning
+} | null;
+```
+
+**Interaction Flow:**
+1. **handleMouseDown:** Detect what was clicked, set drag state
+2. **handleMouseMove:** Update preview/position based on drag state
+3. **handleMouseUp:** Execute final action, clear drag state
+
+### Visual Feedback
+
+**Drag Previews:**
+- **Clip Reorder:** Semi-transparent cyan outline at future position
+- **PiP Move:** Semi-transparent purple outline
+- **Drop Zone:** Zone background tint + preview line + time tooltip
+
+**Hover States:**
+- **Clip Hover:** Edit (blue) + Delete (red) buttons appear
+- **Trim Mode Active:** Edit button turns gold, trim handles appear
+- **Playhead Highlight:** Larger hit threshold for easy grabbing
 
 ---
 
