@@ -192,11 +192,28 @@ function VideoPlayer() {
     const sequenceTime = clip.startTimeInSequence + timeInClip;
     setCurrentTime(sequenceTime);
 
-    // Auto-pause when reaching the end of the trimmed portion
+    // Check if we've reached the end of the trimmed portion
     const trimmedDuration = clip.trimEnd - clip.trimStart;
-    if (timeInClip >= trimmedDuration) {
-      video.pause();
-      setPlaying(false);
+    if (timeInClip >= trimmedDuration - 0.05) { // Small threshold to catch end
+      // Calculate the end of this clip in the timeline
+      const clipEndTime = clip.startTimeInSequence + trimmedDuration;
+
+      // Check if there's any clip after this point in the timeline
+      const hasNextClip = clips.some(c =>
+        c.startTimeInSequence >= clipEndTime && c.duration !== null
+      );
+
+      if (hasNextClip) {
+        // Move playhead slightly past the end to trigger transition to next clip
+        console.log('[VideoPlayer] Clip end reached, moving to next timeline position:', clipEndTime);
+        setCurrentTime(clipEndTime + 0.01);
+        // Keep playing
+      } else {
+        // No more clips in the timeline, pause
+        console.log('[VideoPlayer] Timeline end reached, pausing');
+        video.pause();
+        setPlaying(false);
+      }
     }
   };
 

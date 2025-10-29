@@ -15,8 +15,9 @@ interface ClipCardProps {
 
 function ClipCard({ clip, index, totalClips, isActive, onRemove, onReorder, onReset }: ClipCardProps) {
   console.log('[MediaPanel] ClipCard rendering for clip:', { id: clip.id, name: clip.name, path: clip.path, hasPath: !!clip.path });
-  const thumbnailUrl = useVideoThumbnail(clip.path);
-  console.log('[MediaPanel] Thumbnail URL for clip', clip.name, ':', thumbnailUrl ? 'Generated' : 'null');
+  // Use trimStart as the thumbnail seek time so split clips get unique thumbnails
+  const thumbnailUrl = useVideoThumbnail(clip.path, clip.trimStart);
+  console.log('[MediaPanel] Thumbnail URL for clip', clip.name, ':', thumbnailUrl ? 'Generated' : 'null', 'seekTime:', clip.trimStart);
 
   const formatDuration = (seconds: number | null) => {
     if (seconds === null) return 'Loading...';

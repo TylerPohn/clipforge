@@ -1,5 +1,6 @@
 import { useRef, useEffect, useState } from 'react';
-import { Box, Typography, Stack } from '@mui/material';
+import { Box, Typography, Stack, IconButton, Tooltip, CircularProgress } from '@mui/material';
+import ContentCutIcon from '@mui/icons-material/ContentCut';
 import { useVideoStore } from '../store/videoStore';
 
 function TimelineRuler() {
@@ -12,7 +13,10 @@ function TimelineRuler() {
     videoDuration,
     currentTime,
     setCurrentTime,
-    updateClipTrim
+    updateClipTrim,
+    splitClipAtTime,
+    getCurrentClip,
+    isSplitting
   } = useVideoStore();
 
   // Format time as MM:SS
@@ -20,6 +24,27 @@ function TimelineRuler() {
     const mins = Math.floor(seconds / 60);
     const secs = Math.floor(seconds % 60);
     return `${mins}:${secs.toString().padStart(2, '0')}`;
+  };
+
+  // Check if split is available at current playhead position
+  const canSplitAtPlayhead = () => {
+    const currentClip = getCurrentClip();
+    if (!currentClip || !currentClip.duration) return false;
+
+    const timeInClip = currentTime - currentClip.startTimeInSequence;
+    const trimmedDuration = currentClip.trimEnd - currentClip.trimStart;
+    const minDuration = 0.1;
+
+    // Check if playhead is at least 0.1s from both edges
+    return timeInClip >= minDuration && timeInClip <= trimmedDuration - minDuration;
+  };
+
+  // Handle split button click
+  const handleSplitClip = () => {
+    const currentClip = getCurrentClip();
+    if (!currentClip || !canSplitAtPlayhead()) return;
+
+    splitClipAtTime(currentClip.id, currentTime);
   };
 
   // Draw timeline on canvas
@@ -255,7 +280,7 @@ function TimelineRuler() {
           cursor: isDragging ? 'grabbing' : 'pointer',
           border: '1px solid rgba(255, 255, 255, 0.12)',
           borderRadius: 1,
-          overflow: 'hidden',
+          overflow: 'visible',
           backgroundColor: 'rgba(0, 0, 0, 0.2)'
         }}
       >
@@ -265,6 +290,46 @@ function TimelineRuler() {
           height={80}
           style={{ display: 'block', width: '100%', height: '100%' }}
         />
+
+        {/* Split button - appears near playhead when valid split position */}
+        {canSplitAtPlayhead() && containerRef.current && (
+          <Tooltip title={isSplitting ? "Splitting..." : "Split clip at playhead"} placement="top">
+            <IconButton
+              onClick={handleSplitClip}
+              disabled={isSplitting}
+              size="small"
+              sx={{
+                position: 'absolute',
+                left: `${(currentTime / (videoDuration || 1)) * 100}%`,
+                top: -40,
+                transform: 'translateX(-50%)',
+                backgroundColor: 'rgba(255, 64, 129, 0.9)',
+                color: 'white',
+                opacity: isSplitting ? 1 : 0.5,
+                transition: 'opacity 0.2s ease-in-out',
+                '&:hover': {
+                  backgroundColor: 'rgba(255, 64, 129, 1)',
+                  opacity: 1,
+                },
+                '&.Mui-disabled': {
+                  backgroundColor: 'rgba(255, 64, 129, 0.9)',
+                  color: 'white',
+                  opacity: 1,
+                },
+                boxShadow: 2,
+                width: 32,
+                height: 32,
+                zIndex: 10
+              }}
+            >
+              {isSplitting ? (
+                <CircularProgress size={16} sx={{ color: 'white' }} />
+              ) : (
+                <ContentCutIcon fontSize="small" />
+              )}
+            </IconButton>
+          </Tooltip>
+        )}
       </Box>
     </Box>
   );

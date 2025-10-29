@@ -15,14 +15,24 @@ export function useVideoMetadata() {
   const fetchedClipIds = useRef<Set<string>>(new Set());
 
   useEffect(() => {
-    // Process each clip that doesn't have metadata yet
+    // Process each clip that doesn't have complete metadata and blob URL
     clips.forEach((clip) => {
-      // Skip if already fetched or already has metadata
-      if (fetchedClipIds.current.has(clip.id) || clip.duration !== null) {
+      // Skip if already fetched
+      if (fetchedClipIds.current.has(clip.id)) {
         return;
       }
 
-      console.log('[useVideoMetadata] Fetching metadata for clip:', { id: clip.id, path: clip.path });
+      // Skip if already has both metadata and blob URL
+      if (clip.duration !== null && clip.blobUrl !== null) {
+        return;
+      }
+
+      console.log('[useVideoMetadata] Processing clip:', {
+        id: clip.id,
+        path: clip.path,
+        hasDuration: clip.duration !== null,
+        hasBlobUrl: clip.blobUrl !== null
+      });
 
       // Mark as being fetched
       fetchedClipIds.current.add(clip.id);
@@ -36,69 +46,83 @@ export function useVideoMetadata() {
 
           const invoke = window.__TAURI_INVOKE__;
 
-          console.log('[useVideoMetadata] Calling get_video_metadata command for clip:', clip.id);
-          const metadataJson = (await invoke('get_video_metadata', {
-            videoPath: clip.path
-          })) as string;
+          let duration = clip.duration;
+          let resolution = clip.resolution;
 
-          console.log('[useVideoMetadata] Received metadata response for clip:', clip.id);
-          const metadata = JSON.parse(metadataJson);
+          // Only fetch metadata if not already present
+          if (duration === null || resolution === null) {
+            console.log('[useVideoMetadata] Calling get_video_metadata command for clip:', clip.id);
+            const metadataJson = (await invoke('get_video_metadata', {
+              videoPath: clip.path
+            })) as string;
 
-          console.log('[useVideoMetadata] Parsed metadata:', {
-            clipId: clip.id,
-            streams: metadata.streams.length,
-            format: metadata.format
-          });
+            console.log('[useVideoMetadata] Received metadata response for clip:', clip.id);
+            const metadata = JSON.parse(metadataJson);
 
-          // Extract video stream (usually first video stream)
-          const videoStream = metadata.streams.find(
-            (s: any) => s.codec_type === 'video'
-          );
+            console.log('[useVideoMetadata] Parsed metadata:', {
+              clipId: clip.id,
+              streams: metadata.streams.length,
+              format: metadata.format
+            });
 
-          if (!videoStream) {
-            throw new Error('No video stream found');
-          }
+            // Extract video stream (usually first video stream)
+            const videoStream = metadata.streams.find(
+              (s: any) => s.codec_type === 'video'
+            );
 
-          // Parse duration
-          const duration = parseFloat(metadata.format.duration);
+            if (!videoStream) {
+              throw new Error('No video stream found');
+            }
 
-          // Parse resolution
-          const resolution = {
-            width: videoStream.width,
-            height: videoStream.height
-          };
+            // Parse duration
+            duration = parseFloat(metadata.format.duration);
 
-          // Update clip metadata in store
-          updateClipMetadata(clip.id, duration, resolution);
+            // Parse resolution
+            resolution = {
+              width: videoStream.width,
+              height: videoStream.height
+            };
 
-          console.log('[useVideoMetadata] Metadata loaded successfully for clip:', {
-            clipId: clip.id,
-            duration,
-            resolution
-          });
+            // Update clip metadata in store
+            updateClipMetadata(clip.id, duration, resolution);
 
-          // Load video blob and store the URL
-          console.log('[useVideoMetadata] Loading blob for clip:', clip.id);
-          const blobUrl = await loadVideoBlob(clip.id, clip.path);
-          if (blobUrl) {
-            updateClipBlobUrl(clip.id, blobUrl);
-            console.log('[useVideoMetadata] Blob loaded successfully for clip:', clip.id);
+            console.log('[useVideoMetadata] Metadata loaded successfully for clip:', {
+              clipId: clip.id,
+              duration,
+              resolution
+            });
           } else {
-            console.error('[useVideoMetadata] Failed to load blob for clip:', clip.id);
+            console.log('[useVideoMetadata] Clip already has metadata, skipping metadata fetch:', clip.id);
           }
 
-          // Also create a track in the composite state
-          const clipData: ClipData = {
-            id: clip.id,
-            path: clip.path,
-            name: clip.name,
-            duration: duration * 1000, // Convert to milliseconds
-            width: resolution.width,
-            height: resolution.height
-          };
+          // Always load blob if missing
+          if (!clip.blobUrl) {
+            console.log('[useVideoMetadata] Loading blob for clip:', clip.id);
+            const blobUrl = await loadVideoBlob(clip.id, clip.path);
+            if (blobUrl) {
+              updateClipBlobUrl(clip.id, blobUrl);
+              console.log('[useVideoMetadata] Blob loaded successfully for clip:', clip.id);
+            } else {
+              console.error('[useVideoMetadata] Failed to load blob for clip:', clip.id);
+            }
+          } else {
+            console.log('[useVideoMetadata] Clip already has blob URL:', clip.id);
+          }
 
-          addTrack(clipData);
-          console.log('[useVideoMetadata] Track created for clip:', clip.id);
+          // Create a track in the composite state (only if we just loaded metadata)
+          if (duration && resolution && !clip.duration) {
+            const clipData: ClipData = {
+              id: clip.id,
+              path: clip.path,
+              name: clip.name,
+              duration: duration * 1000, // Convert to milliseconds
+              width: resolution.width,
+              height: resolution.height
+            };
+
+            addTrack(clipData);
+            console.log('[useVideoMetadata] Track created for clip:', clip.id);
+          }
 
         } catch (error) {
           console.error('[useVideoMetadata] Failed to load metadata for clip:', clip.id, error);
@@ -109,5 +133,5 @@ export function useVideoMetadata() {
 
       fetchMetadata();
     });
-  }, [clips, updateClipMetadata]);
+  }, [clips, updateClipMetadata, updateClipBlobUrl, addTrack]);
 }

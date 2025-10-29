@@ -39,6 +39,9 @@ interface VideoState {
   currentTime: number; // Current time in the overall sequence
   volume: number;
 
+  // Loading state
+  isSplitting: boolean;
+
   // Recording resolution state
   selectedResolution: VideoResolution;
   screenSourceResolution?: { width: number; height: number };
@@ -52,6 +55,7 @@ interface VideoState {
   resetClipTrim: (clipId: string) => void;
   removeClip: (clipId: string) => void;
   reorderClip: (clipId: string, newIndex: number) => void;
+  splitClipAtTime: (clipId: string, splitTime: number) => void;
   clearAllClips: () => void;
   getCurrentClip: () => Clip | null;
 
@@ -127,6 +131,7 @@ export const useVideoStore = create<VideoState>((set, get) => ({
   isPlaying: false,
   currentTime: 0,
   volume: 1.0,
+  isSplitting: false,
   selectedResolution: VideoResolution['720P'],
   screenSourceResolution: undefined,
   cameraSourceResolution: undefined,
@@ -330,10 +335,107 @@ export const useVideoStore = create<VideoState>((set, get) => ({
 
     // Recalculate start times since clip order changed
     const recalculatedClips = recalculateStartTimes(updatedClips);
+    const totalDuration = calculateTotalDuration(recalculatedClips);
 
     console.log('[VideoStore] Reordering clip:', { clipId, oldIndex, newIndex });
+    console.log('[VideoStore] New clip order:', recalculatedClips.map(c => ({
+      id: c.id,
+      name: c.name,
+      startTime: c.startTimeInSequence,
+      duration: c.duration ? (c.trimEnd - c.trimStart) : 0
+    })));
 
-    set({ clips: recalculatedClips });
+    set({
+      clips: recalculatedClips,
+      videoDuration: totalDuration
+    });
+  },
+
+  splitClipAtTime: (clipId, splitTime) => {
+    const state = get();
+
+    // Set loading state
+    set({ isSplitting: true });
+
+    // Use setTimeout to allow UI to update with spinner
+    setTimeout(() => {
+      const clipIndex = state.clips.findIndex(c => c.id === clipId);
+
+      if (clipIndex === -1) {
+        console.error('[VideoStore] Clip not found:', clipId);
+        set({ isSplitting: false });
+        return;
+      }
+
+      const clip = state.clips[clipIndex];
+
+      // Ensure clip has metadata loaded
+      if (!clip.duration) {
+        console.warn('[VideoStore] Cannot split clip without metadata:', clipId);
+        set({ isSplitting: false });
+        return;
+      }
+
+      // Convert split time from sequence coordinates to clip-internal time
+      const timeInClip = splitTime - clip.startTimeInSequence;
+      const splitPointInOriginal = clip.trimStart + timeInClip;
+
+      // Validate split point is within trimmed range and not too close to edges
+      const minDuration = 0.1;
+      if (splitPointInOriginal <= clip.trimStart + minDuration ||
+          splitPointInOriginal >= clip.trimEnd - minDuration) {
+        console.warn('[VideoStore] Split point too close to clip boundaries');
+        set({ isSplitting: false });
+        return;
+      }
+
+      // Generate unique IDs for the two new clips
+      const timestamp = Date.now();
+      const randomSuffix = Math.random().toString(36).substr(2, 9);
+      const clipId1 = `clip-${timestamp}-${randomSuffix}-1`;
+      const clipId2 = `clip-${timestamp}-${randomSuffix}-2`;
+
+      // Create first clip (from start to split point)
+      const clip1: Clip = {
+        ...clip,
+        id: clipId1,
+        name: `${clip.name}-1`,
+        trimEnd: splitPointInOriginal,
+        startTimeInSequence: clip.startTimeInSequence
+      };
+
+      // Create second clip (from split point to end)
+      const clip2: Clip = {
+        ...clip,
+        id: clipId2,
+        name: `${clip.name}-2`,
+        trimStart: splitPointInOriginal,
+        startTimeInSequence: 0 // Will be recalculated
+      };
+
+      console.log('[VideoStore] Splitting clip:', {
+        clipId,
+        splitTime,
+        splitPointInOriginal,
+        clip1Duration: clip1.trimEnd - clip1.trimStart,
+        clip2Duration: clip2.trimEnd - clip2.trimStart
+      });
+
+      // Replace the original clip with two new clips
+      const updatedClips = [...state.clips];
+      updatedClips.splice(clipIndex, 1, clip1, clip2);
+
+      // Recalculate timeline positions
+      const recalculatedClips = recalculateStartTimes(updatedClips);
+      const totalDuration = calculateTotalDuration(recalculatedClips);
+
+      set({
+        clips: recalculatedClips,
+        videoDuration: totalDuration,
+        currentTime: splitTime, // Keep playhead at split point
+        isSplitting: false
+      });
+    }, 50);
   },
 
   clearAllClips: () => {

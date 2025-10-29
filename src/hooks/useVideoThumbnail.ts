@@ -5,13 +5,14 @@ declare const window: any;
 /**
  * Hook to generate a thumbnail from a video file
  * @param videoPath - Path to the video file
+ * @param seekTime - Optional time in seconds to seek to for the thumbnail. If not provided, seeks to 1s or 10% of duration
  * @returns Data URL of the generated thumbnail or null if not yet generated
  */
-export function useVideoThumbnail(videoPath: string | null): string | null {
+export function useVideoThumbnail(videoPath: string | null, seekTime?: number): string | null {
   const [thumbnailUrl, setThumbnailUrl] = useState<string | null>(null);
 
   useEffect(() => {
-    console.log('[useVideoThumbnail] Hook called with videoPath:', videoPath);
+    console.log('[useVideoThumbnail] Hook called with videoPath:', videoPath, 'seekTime:', seekTime);
 
     if (!videoPath) {
       console.warn('[useVideoThumbnail] No videoPath provided, returning early');
@@ -19,7 +20,7 @@ export function useVideoThumbnail(videoPath: string | null): string | null {
       return;
     }
 
-    console.log('[useVideoThumbnail] Starting thumbnail generation for:', videoPath);
+    console.log('[useVideoThumbnail] Starting thumbnail generation for:', videoPath, 'at time:', seekTime);
     let isMounted = true;
     let videoElement: HTMLVideoElement | null = null;
     let blobUrl: string | null = null;
@@ -120,9 +121,11 @@ export function useVideoThumbnail(videoPath: string | null): string | null {
           }
         });
 
-        // Seek to 1 second or 10% of duration, whichever is smaller
-        const seekTime = Math.min(1, videoElement.duration * 0.1);
-        console.log('[useVideoThumbnail] Step 9: Seeking to time:', seekTime, 'Duration:', videoElement.duration);
+        // Use provided seekTime or default to 1 second or 10% of duration
+        const targetSeekTime = seekTime !== undefined
+          ? Math.min(seekTime, videoElement.duration - 0.1) // Ensure we don't seek past the end
+          : Math.min(1, videoElement.duration * 0.1);
+        console.log('[useVideoThumbnail] Step 9: Seeking to time:', targetSeekTime, 'Duration:', videoElement.duration, 'Provided seekTime:', seekTime);
 
         // Wait for the seek to complete with timeout fallback
         let seekTimeout: NodeJS.Timeout | null = null;
@@ -159,7 +162,7 @@ export function useVideoThumbnail(videoPath: string | null): string | null {
           }, 3000);
 
           // Now set currentTime to trigger seek
-          videoElement.currentTime = seekTime;
+          videoElement.currentTime = targetSeekTime;
         });
 
         // Create canvas and draw the current frame
@@ -213,7 +216,7 @@ export function useVideoThumbnail(videoPath: string | null): string | null {
         URL.revokeObjectURL(blobUrl);
       }
     };
-  }, [videoPath]);
+  }, [videoPath, seekTime]);
 
   return thumbnailUrl;
 }
