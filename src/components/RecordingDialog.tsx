@@ -48,7 +48,7 @@ function RecordingDialog({ open, onClose }: RecordingDialogProps) {
   const [selectedAudioDevice, setSelectedAudioDevice] = useState<string>('');
   const [isWindows, setIsWindows] = useState(false);
 
-  const setVideo = useVideoStore((state) => state.setVideo);
+  const addClip = useVideoStore((state) => state.addClip);
   const selectedResolution = useVideoStore((state) => state.selectedResolution);
   const setSelectedResolution = useVideoStore((state) => state.setSelectedResolution);
   const setScreenSourceResolution = useVideoStore((state) => state.setScreenSourceResolution);
@@ -209,7 +209,7 @@ function RecordingDialog({ open, onClose }: RecordingDialogProps) {
 
         // Auto-import the recording
         const fileName = finalPath.split('/').pop() || finalPath.split('\\').pop() || 'recording.mp4';
-        setVideo(finalPath, fileName);
+        addClip(finalPath, fileName);
       }
 
       // Close dialog
