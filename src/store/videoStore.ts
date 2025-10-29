@@ -28,6 +28,9 @@ interface VideoState {
   // Multi-track compositing (layered/simultaneous playback)
   composite: CompositeState;
 
+  // PiP track for sequential view (overlay video)
+  pipTrack: Track | null;
+
   // Legacy single-clip properties (computed from clips array)
   videoPath: string | null;
   videoName: string | null;
@@ -78,6 +81,16 @@ interface VideoState {
   setCompositeCurrentTime: (time: number) => void;
   toggleSoloTrack: (trackId: string) => void;
 
+  // PiP Track Management (for sequential view)
+  setPipTrackFromClip: (clipId: string) => void;
+  updatePipTrackProperty: <K extends keyof Track>(property: K, value: Track[K]) => void;
+  updatePipTrackPosition: (corner: 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right') => void;
+  updatePipTrackSize: (sizePercent: number) => void;
+  updatePipTrackVolume: (volume: number) => void;
+  updatePipTrackOffset: (offset: number) => void;
+  updatePipTrackDuration: (duration: number) => void;
+  removePipTrack: () => void;
+
   // Legacy methods (kept for backward compatibility, now internally use clips)
   setVideo: (path: string, name: string) => void;
   setMetadata: (duration: number, resolution: { width: number; height: number }) => void;
@@ -124,6 +137,7 @@ export const useVideoStore = create<VideoState>((set, get) => ({
     isPlayingComposite: false,
     currentTime: 0
   },
+  pipTrack: null,
   videoPath: null,
   videoName: null,
   videoDuration: null,
@@ -800,5 +814,227 @@ export const useVideoStore = create<VideoState>((set, get) => ({
         soloTrackId: newSoloTrackId
       }
     });
+  },
+
+  // PiP Track Management Methods
+  setPipTrackFromClip: (clipId: string) => {
+    const state = get();
+    const clip = state.clips.find(c => c.id === clipId);
+
+    if (!clip) {
+      console.error('[VideoStore] Clip not found:', clipId);
+      return;
+    }
+
+    if (!clip.duration || !clip.resolution) {
+      console.error('[VideoStore] Clip metadata not loaded:', clipId);
+      return;
+    }
+
+    // Get canvas/video dimensions for default position
+    const canvasWidth = state.videoResolution?.width || 1920;
+    const canvasHeight = state.videoResolution?.height || 1080;
+
+    // Default to bottom-right corner with 25% size
+    const pipWidth = clip.resolution.width * 0.25;
+    const pipHeight = clip.resolution.height * 0.25;
+    const margin = 20;
+    const defaultPosition = {
+      x: canvasWidth - pipWidth - margin,
+      y: canvasHeight - pipHeight - margin
+    };
+
+    // Convert Clip to Track for PiP
+    const pipTrack: Track = {
+      id: `pip-${Date.now()}`,
+      name: clip.name,
+      clipData: {
+        id: clip.id,
+        path: clip.path,
+        name: clip.name,
+        duration: clip.duration * 1000, // Convert to milliseconds
+        width: clip.resolution.width,
+        height: clip.resolution.height,
+      },
+      position: defaultPosition, // Default to bottom-right
+      volume: 0.5, // Default to 50% volume
+      opacity: 1,
+      zIndex: 999, // High z-index to ensure it's on top
+      isVisible: true,
+      offset: 0, // Start at beginning of timeline
+      duration: clip.duration * 1000, // Convert to milliseconds
+      createdAt: new Date(),
+      sourceFile: clip.path,
+    };
+
+    console.log('[VideoStore] Setting PiP track from clip:', clipId, 'position:', defaultPosition);
+
+    set({ pipTrack });
+  },
+
+  updatePipTrackProperty: <K extends keyof Track>(property: K, value: Track[K]) => {
+    const state = get();
+
+    if (!state.pipTrack) {
+      console.error('[VideoStore] No PiP track to update');
+      return;
+    }
+
+    const updatedPipTrack = {
+      ...state.pipTrack,
+      [property]: value
+    };
+
+    console.log('[VideoStore] Updating PiP track property:', property, value);
+
+    set({ pipTrack: updatedPipTrack });
+  },
+
+  updatePipTrackPosition: (corner: 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right') => {
+    const state = get();
+
+    if (!state.pipTrack) {
+      console.error('[VideoStore] No PiP track to update position');
+      return;
+    }
+
+    // Get canvas/video dimensions (we'll use a standard 1920x1080 reference)
+    // The actual positioning will be done in VideoPlayer with CSS
+    // We just store the corner preference
+    const canvasWidth = state.videoResolution?.width || 1920;
+    const canvasHeight = state.videoResolution?.height || 1080;
+
+    // PiP size (will be scaled by sizePercent, default 25%)
+    const pipWidth = state.pipTrack.clipData.width * 0.25;
+    const pipHeight = state.pipTrack.clipData.height * 0.25;
+
+    // Margin from edges
+    const margin = 20;
+
+    let position: { x: number; y: number };
+
+    switch (corner) {
+      case 'top-left':
+        position = { x: margin, y: margin };
+        break;
+      case 'top-right':
+        position = { x: canvasWidth - pipWidth - margin, y: margin };
+        break;
+      case 'bottom-left':
+        position = { x: margin, y: canvasHeight - pipHeight - margin };
+        break;
+      case 'bottom-right':
+        position = { x: canvasWidth - pipWidth - margin, y: canvasHeight - pipHeight - margin };
+        break;
+    }
+
+    const updatedPipTrack = {
+      ...state.pipTrack,
+      position
+    };
+
+    console.log('[VideoStore] Updating PiP track position:', corner, position);
+
+    set({ pipTrack: updatedPipTrack });
+  },
+
+  updatePipTrackSize: (sizePercent: number) => {
+    const state = get();
+
+    if (!state.pipTrack) {
+      console.error('[VideoStore] No PiP track to update size');
+      return;
+    }
+
+    // Size is stored as a scale factor (0.25 = 25%, 0.33 = 33%, 0.5 = 50%)
+    const scale = sizePercent / 100;
+
+    // Update the clip data width/height to reflect the new size
+    const updatedPipTrack = {
+      ...state.pipTrack,
+      clipData: {
+        ...state.pipTrack.clipData,
+        // Store the scale factor - actual rendering will use this
+        width: state.pipTrack.clipData.width * scale,
+        height: state.pipTrack.clipData.height * scale,
+      }
+    };
+
+    console.log('[VideoStore] Updating PiP track size:', sizePercent, '%');
+
+    set({ pipTrack: updatedPipTrack });
+  },
+
+  updatePipTrackVolume: (volume: number) => {
+    const state = get();
+
+    if (!state.pipTrack) {
+      console.error('[VideoStore] No PiP track to update volume');
+      return;
+    }
+
+    const clampedVolume = Math.max(0, Math.min(1, volume));
+
+    const updatedPipTrack = {
+      ...state.pipTrack,
+      volume: clampedVolume
+    };
+
+    console.log('[VideoStore] Updating PiP track volume:', clampedVolume);
+
+    set({ pipTrack: updatedPipTrack });
+  },
+
+  updatePipTrackOffset: (offset: number) => {
+    const state = get();
+
+    if (!state.pipTrack) {
+      console.error('[VideoStore] No PiP track to update offset');
+      return;
+    }
+
+    const clampedOffset = Math.max(0, offset);
+
+    const updatedPipTrack = {
+      ...state.pipTrack,
+      offset: clampedOffset
+    };
+
+    console.log('[VideoStore] Updating PiP track offset:', clampedOffset);
+
+    set({ pipTrack: updatedPipTrack });
+  },
+
+  updatePipTrackDuration: (duration: number) => {
+    const state = get();
+
+    if (!state.pipTrack) {
+      console.error('[VideoStore] No PiP track to update duration');
+      return;
+    }
+
+    const clampedDuration = Math.max(100, duration); // Minimum 100ms
+
+    const updatedPipTrack = {
+      ...state.pipTrack,
+      duration: clampedDuration
+    };
+
+    console.log('[VideoStore] Updating PiP track duration:', clampedDuration);
+
+    set({ pipTrack: updatedPipTrack });
+  },
+
+  removePipTrack: () => {
+    const state = get();
+
+    if (!state.pipTrack) {
+      console.warn('[VideoStore] No PiP track to remove');
+      return;
+    }
+
+    console.log('[VideoStore] Removing PiP track');
+
+    set({ pipTrack: null });
   },
 }));

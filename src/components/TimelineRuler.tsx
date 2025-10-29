@@ -10,6 +10,7 @@ function TimelineRuler() {
 
   const {
     clips,
+    pipTrack,
     videoDuration,
     currentTime,
     setCurrentTime,
@@ -61,9 +62,26 @@ function TimelineRuler() {
     // Clear canvas
     ctx.clearRect(0, 0, width, height);
 
-    // Draw background
+    // Define heights for main track and PiP track
+    const mainTrackHeight = pipTrack ? height * 0.65 : height;
+    const pipTrackTop = pipTrack ? mainTrackHeight + 5 : 0;
+    const pipTrackHeight = pipTrack ? height - pipTrackTop : 0;
+
+    // Draw background for main track
     ctx.fillStyle = 'rgba(255, 255, 255, 0.05)';
-    ctx.fillRect(0, 0, width, height);
+    ctx.fillRect(0, 0, width, mainTrackHeight);
+
+    // Draw background for PiP track if it exists
+    if (pipTrack) {
+      ctx.fillStyle = 'rgba(156, 39, 176, 0.1)'; // Purple tint for PiP track
+      ctx.fillRect(0, pipTrackTop, width, pipTrackHeight);
+
+      // Draw PiP track label
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.6)';
+      ctx.font = '10px sans-serif';
+      ctx.textBaseline = 'top';
+      ctx.fillText('PiP', 4, pipTrackTop + 2);
+    }
 
     // Draw each clip showing only trimmed portion with trim handles
     const clipGap = 4; // Pixels of space between clips
@@ -85,16 +103,16 @@ function TimelineRuler() {
         'rgba(76, 175, 80, 0.3)',  // Green
       ];
       ctx.fillStyle = colors[index % colors.length];
-      ctx.fillRect(clipStartX, 0, clipWidth, height);
+      ctx.fillRect(clipStartX, 0, clipWidth, mainTrackHeight);
 
       // Draw trim handles for this clip (yellow/gold color)
       ctx.fillStyle = '#ffd700';
 
       // Left trim handle
-      ctx.fillRect(clipStartX - 2, 0, 4, height);
+      ctx.fillRect(clipStartX - 2, 0, 4, mainTrackHeight);
 
       // Right trim handle
-      ctx.fillRect(clipEndX - 2, 0, 4, height);
+      ctx.fillRect(clipEndX - 2, 0, 4, mainTrackHeight);
 
       // Draw clip name (if space permits)
       if (clipWidth > 60) {
@@ -110,6 +128,33 @@ function TimelineRuler() {
         ctx.fillText(formatTime(trimmedDuration), clipStartX + 4, 18);
       }
     });
+
+    // Draw PiP track if it exists
+    if (pipTrack) {
+      const pipStartTime = pipTrack.offset / 1000; // Convert from ms to seconds
+      const pipDuration = pipTrack.duration / 1000;
+      const pipStartX = (pipStartTime / videoDuration) * width;
+      const pipEndX = ((pipStartTime + pipDuration) / videoDuration) * width;
+      const pipWidth = pipEndX - pipStartX;
+
+      // Draw PiP track bar
+      ctx.fillStyle = 'rgba(156, 39, 176, 0.6)'; // Purple
+      ctx.fillRect(pipStartX, pipTrackTop, pipWidth, pipTrackHeight);
+
+      // Draw PiP track border
+      ctx.strokeStyle = '#9c27b0';
+      ctx.lineWidth = 2;
+      ctx.strokeRect(pipStartX, pipTrackTop, pipWidth, pipTrackHeight);
+
+      // Draw PiP track name (if space permits)
+      if (pipWidth > 60) {
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.9)';
+        ctx.font = 'bold 10px sans-serif';
+        ctx.textBaseline = 'middle';
+        const pipName = pipTrack.name.length > 12 ? pipTrack.name.substring(0, 9) + '...' : pipTrack.name;
+        ctx.fillText(pipName, pipStartX + 4, pipTrackTop + pipTrackHeight / 2);
+      }
+    }
 
     // Calculate playhead position
     const playheadX = (currentTime / videoDuration) * width;
@@ -132,7 +177,7 @@ function TimelineRuler() {
       ctx.fillText(formatTime(i), x + 2, height - 12);
     }
 
-  }, [clips, videoDuration, currentTime, formatTime]);
+  }, [clips, pipTrack, videoDuration, currentTime, formatTime]);
 
   // Handle mouse down (start dragging or seeking)
   const handleMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {

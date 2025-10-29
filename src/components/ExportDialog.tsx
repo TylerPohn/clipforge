@@ -27,6 +27,7 @@ interface ExportDialogProps {
   compositeMode?: boolean;
   // Sequential mode props
   clips?: Clip[];
+  pipTrack?: Track | null;
   inputPath?: string | null;
   videoName?: string | null;
   videoResolution?: { width: number; height: number };
@@ -39,6 +40,7 @@ function ExportDialog({
   onClose,
   compositeMode = false,
   clips = [],
+  pipTrack,
   inputPath: _inputPath, // Keep for backwards compatibility but unused
   videoName,
   videoResolution,
@@ -236,16 +238,43 @@ function ExportDialog({
           setProgress(100);
         } else {
           // Multiple clips - use concatenate_clips
+          // Prepare PiP track data if it exists
+          let pipTrackData = null;
+          if (pipTrack) {
+            // Determine corner position based on pipTrack.position
+            const {x, y} = pipTrack.position;
+            const isLeft = x < 100;
+            const isTop = y < 100;
+            let corner = 'bottom-right';
+            if (isTop && isLeft) corner = 'top-left';
+            else if (isTop && !isLeft) corner = 'top-right';
+            else if (!isTop && isLeft) corner = 'bottom-left';
+
+            // Calculate size percent from clipData dimensions (assuming 25% default)
+            const sizePercent = 25; // This could be calculated or stored in pipTrack
+
+            pipTrackData = {
+              path: pipTrack.clipData.path,
+              offset: pipTrack.offset / 1000, // Convert ms to seconds
+              duration: pipTrack.duration / 1000, // Convert ms to seconds
+              volume: pipTrack.volume,
+              position: corner,
+              size_percent: sizePercent
+            };
+          }
+
           console.log('[ExportDialog] Calling concatenate_clips with:', {
             clips: clipsToExport,
             outputPath: finalOutputPath,
-            exportOptions
+            exportOptions,
+            pipTrack: pipTrackData
           });
 
           const result = (await invoke('concatenate_clips', {
             clips: clipsToExport,
             outputPath: finalOutputPath,
-            exportOptions
+            exportOptions,
+            pipTrack: pipTrackData
           })) as string;
 
           console.log('[ExportDialog] concatenate_clips completed:', result);

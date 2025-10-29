@@ -85,6 +85,16 @@ struct ClipSegment {
     clip_end: f64,
 }
 
+#[derive(Debug, Deserialize, Clone)]
+struct PipTrackData {
+    path: String,
+    offset: f64,        // Start time in seconds
+    duration: f64,      // Duration in seconds
+    volume: f64,        // 0.0 to 1.0
+    position: String,   // "top-left", "top-right", "bottom-left", "bottom-right"
+    size_percent: f64,  // 25, 33, or 50
+}
+
 #[tauri::command]
 async fn trim_video(
     input_path: String,
@@ -216,10 +226,15 @@ async fn concatenate_clips(
     clips: Vec<ClipSegment>,
     output_path: String,
     export_options: Option<ExportOptions>,
+    pip_track: Option<PipTrackData>,
     _window: tauri::Window
 ) -> Result<String, String> {
     println!("[concatenate_clips] Starting concatenation of {} clips", clips.len());
     println!("[concatenate_clips] Output: {}", output_path);
+    if let Some(ref pip) = pip_track {
+        println!("[concatenate_clips] PiP track: {} (offset: {}s, duration: {}s, position: {})",
+            pip.path, pip.offset, pip.duration, pip.position);
+    }
 
     if clips.is_empty() {
         return Err("No clips provided for concatenation".to_string());
@@ -313,33 +328,123 @@ async fn concatenate_clips(
 
     println!("[concatenate_clips] Concatenating segments into final output");
 
-    // Concatenate all segments
+    // If no PiP track, use simple concat
+    if pip_track.is_none() {
+        let concat_args = vec![
+            "-y".to_string(),
+            "-f".to_string(), "concat".to_string(),
+            "-safe".to_string(), "0".to_string(),
+            "-i".to_string(), concat_list_path.to_str().unwrap().to_string(),
+            "-c".to_string(), "copy".to_string(),
+            output_path.clone(),
+        ];
+
+        println!("[concatenate_clips] Final concat args (no PiP): {:?}", concat_args);
+
+        let status = Command::new("ffmpeg")
+            .args(&concat_args)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .map_err(|e| format!("Failed to execute FFmpeg for concatenation: {}", e))?;
+
+        // Clean up temp directory
+        let _ = std::fs::remove_dir_all(&temp_dir);
+
+        if status.success() {
+            println!("[concatenate_clips] Concatenation completed successfully");
+            return Ok(output_path);
+        } else {
+            return Err("FFmpeg concatenation failed".to_string());
+        }
+    }
+
+    // With PiP track, we need to apply overlay filter
+    let pip = pip_track.unwrap();
+
+    // Calculate position based on corner and size
+    let overlay_position = match pip.position.as_str() {
+        "top-left" => "20:20",
+        "top-right" => "main_w-overlay_w-20:20",
+        "bottom-left" => "20:main_h-overlay_h-20",
+        "bottom-right" => "main_w-overlay_w-20:main_h-overlay_h-20",
+        _ => "main_w-overlay_w-20:main_h-overlay_h-20", // Default to bottom-right
+    };
+
+    // Calculate PiP size (as a fraction of main video width)
+    let pip_scale = format!("iw*{}:ih*{}", pip.size_percent / 100.0, pip.size_percent / 100.0);
+
+    // Build complex filter for PiP overlay
+    let filter_complex = format!(
+        "[1:v]scale={}[pip];[0:v][pip]overlay={}:enable='between(t,{},{})'[v];[0:a][1:a]amix=inputs=2:duration=first:weights={} {}[a]",
+        pip_scale,
+        overlay_position,
+        pip.offset,
+        pip.offset + pip.duration,
+        1.0, // Main audio at full volume
+        pip.volume // PiP audio at specified volume
+    );
+
+    println!("[concatenate_clips] PiP overlay filter: {}", filter_complex);
+
+    // First, concatenate the main clips without PiP
+    let temp_concat_path = temp_dir.join("temp_concat.mp4");
     let concat_args = vec![
         "-y".to_string(),
         "-f".to_string(), "concat".to_string(),
         "-safe".to_string(), "0".to_string(),
         "-i".to_string(), concat_list_path.to_str().unwrap().to_string(),
         "-c".to_string(), "copy".to_string(),
-        output_path.clone(),
+        temp_concat_path.to_str().unwrap().to_string(),
     ];
 
-    println!("[concatenate_clips] Final concat args: {:?}", concat_args);
+    println!("[concatenate_clips] Creating temp concat (before PiP): {:?}", concat_args);
 
     let status = Command::new("ffmpeg")
         .args(&concat_args)
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status()
-        .map_err(|e| format!("Failed to execute FFmpeg for concatenation: {}", e))?;
+        .map_err(|e| format!("Failed to execute FFmpeg for temp concatenation: {}", e))?;
+
+    if !status.success() {
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        return Err("FFmpeg temp concatenation failed".to_string());
+    }
+
+    // Now apply PiP overlay
+    let pip_args = vec![
+        "-y".to_string(),
+        "-i".to_string(), temp_concat_path.to_str().unwrap().to_string(),
+        "-i".to_string(), pip.path.clone(),
+        "-filter_complex".to_string(), filter_complex,
+        "-map".to_string(), "[v]".to_string(),
+        "-map".to_string(), "[a]".to_string(),
+        "-c:v".to_string(), "libx264".to_string(),
+        "-preset".to_string(), "fast".to_string(),
+        "-crf".to_string(), "18".to_string(),
+        "-c:a".to_string(), "aac".to_string(),
+        "-b:a".to_string(), "192k".to_string(),
+        output_path.clone(),
+    ];
+
+    println!("[concatenate_clips] Applying PiP overlay: {:?}", pip_args);
+
+    let status = Command::new("ffmpeg")
+        .args(&pip_args)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map_err(|e| format!("Failed to execute FFmpeg for PiP overlay: {}", e))?;
 
     // Clean up temp directory
     let _ = std::fs::remove_dir_all(&temp_dir);
 
     if status.success() {
-        println!("[concatenate_clips] Concatenation completed successfully");
+        println!("[concatenate_clips] PiP overlay completed successfully");
         Ok(output_path)
     } else {
-        Err("FFmpeg concatenation failed".to_string())
+        Err("FFmpeg PiP overlay failed".to_string())
     }
 }
 

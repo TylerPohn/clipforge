@@ -1,5 +1,5 @@
 import { Box, Typography, Paper, IconButton, Stack, Chip } from '@mui/material';
-import { Delete, ArrowBack, ArrowForward, RestartAlt } from '@mui/icons-material';
+import { Delete, ArrowBack, ArrowForward, RestartAlt, PictureInPictureAlt } from '@mui/icons-material';
 import { useVideoStore, Clip } from '../store/videoStore';
 import { useVideoThumbnail } from '../hooks/useVideoThumbnail';
 
@@ -8,12 +8,15 @@ interface ClipCardProps {
   index: number;
   totalClips: number;
   isActive: boolean;
+  isPipTrack: boolean;
   onRemove: (id: string) => void;
   onReorder: (clipId: string, newIndex: number) => void;
   onReset: (id: string) => void;
+  onSetPip: (clipId: string) => void;
+  onRemovePip: () => void;
 }
 
-function ClipCard({ clip, index, totalClips, isActive, onRemove, onReorder, onReset }: ClipCardProps) {
+function ClipCard({ clip, index, totalClips, isActive, isPipTrack, onRemove, onReorder, onReset, onSetPip, onRemovePip }: ClipCardProps) {
   console.log('[MediaPanel] ClipCard rendering for clip:', { id: clip.id, name: clip.name, path: clip.path, hasPath: !!clip.path });
   // Use trimStart as the thumbnail seek time so split clips get unique thumbnails
   const thumbnailUrl = useVideoThumbnail(clip.path, clip.trimStart);
@@ -49,6 +52,15 @@ function ClipCard({ clip, index, totalClips, isActive, onRemove, onReorder, onRe
     onReset(clip.id);
   };
 
+  const handleTogglePip = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (isPipTrack) {
+      onRemovePip();
+    } else {
+      onSetPip(clip.id);
+    }
+  };
+
   return (
     <Paper
       elevation={isActive ? 8 : 2}
@@ -58,10 +70,10 @@ function ClipCard({ clip, index, totalClips, isActive, onRemove, onReorder, onRe
         height: 120,
         position: 'relative',
         transition: 'all 0.2s',
-        border: isActive ? '2px solid #00bcd4' : '2px solid transparent',
+        border: isPipTrack ? '2px solid #9c27b0' : isActive ? '2px solid #00bcd4' : '2px solid transparent',
         '&:hover': {
           elevation: 4,
-          borderColor: isActive ? '#00bcd4' : 'rgba(255, 255, 255, 0.2)',
+          borderColor: isPipTrack ? '#9c27b0' : isActive ? '#00bcd4' : 'rgba(255, 255, 255, 0.2)',
         },
         userSelect: 'none' // Prevent text selection
       }}
@@ -113,21 +125,39 @@ function ClipCard({ clip, index, totalClips, isActive, onRemove, onReorder, onRe
         </IconButton>
       </Stack>
 
-      {/* Clip number badge */}
-      <Chip
-        label={`#${index + 1}`}
-        size="small"
-        sx={{
-          position: 'absolute',
-          top: 4,
-          right: 4,
-          height: 20,
-          fontSize: '0.7rem',
-          zIndex: 10,
-          fontWeight: 'bold'
-        }}
-        color={isActive ? 'primary' : 'default'}
-      />
+      {/* Clip number badge or PiP indicator */}
+      {isPipTrack ? (
+        <Chip
+          label="PiP"
+          size="small"
+          icon={<PictureInPictureAlt />}
+          sx={{
+            position: 'absolute',
+            top: 4,
+            right: 4,
+            height: 20,
+            fontSize: '0.7rem',
+            zIndex: 10,
+            fontWeight: 'bold'
+          }}
+          color="secondary"
+        />
+      ) : (
+        <Chip
+          label={`#${index + 1}`}
+          size="small"
+          sx={{
+            position: 'absolute',
+            top: 4,
+            right: 4,
+            height: 20,
+            fontSize: '0.7rem',
+            zIndex: 10,
+            fontWeight: 'bold'
+          }}
+          color={isActive ? 'primary' : 'default'}
+        />
+      )}
 
       {/* Video thumbnail */}
       <Box sx={{
@@ -199,6 +229,20 @@ function ClipCard({ clip, index, totalClips, isActive, onRemove, onReorder, onRe
             {clip.name}
           </Typography>
           <Stack direction="row" spacing={0.25}>
+            {/* PiP button */}
+            <IconButton
+              size="small"
+              onClick={handleTogglePip}
+              title={isPipTrack ? "Remove from PiP" : "Set as PiP track"}
+              sx={{
+                p: 0.25,
+                opacity: isPipTrack ? 1 : 0.6,
+                color: isPipTrack ? 'secondary.main' : 'inherit',
+                '&:hover': { opacity: 1, color: 'secondary.main' }
+              }}
+            >
+              <PictureInPictureAlt fontSize="small" />
+            </IconButton>
             {/* Reset button - only show if clip is trimmed */}
             {isTrimmed && (
               <IconButton
@@ -242,10 +286,13 @@ function ClipCard({ clip, index, totalClips, isActive, onRemove, onReorder, onRe
 
 function MediaPanel() {
   const clips = useVideoStore((state) => state.clips);
+  const pipTrack = useVideoStore((state) => state.pipTrack);
   const removeClip = useVideoStore((state) => state.removeClip);
   const reorderClip = useVideoStore((state) => state.reorderClip);
   const resetClipTrim = useVideoStore((state) => state.resetClipTrim);
   const getCurrentClip = useVideoStore((state) => state.getCurrentClip);
+  const setPipTrackFromClip = useVideoStore((state) => state.setPipTrackFromClip);
+  const removePipTrack = useVideoStore((state) => state.removePipTrack);
 
   const currentClip = getCurrentClip();
 
@@ -297,9 +344,12 @@ function MediaPanel() {
             index={index}
             totalClips={clips.length}
             isActive={currentClip?.id === clip.id}
+            isPipTrack={pipTrack?.clipData.id === clip.id}
             onRemove={removeClip}
             onReorder={reorderClip}
             onReset={resetClipTrim}
+            onSetPip={setPipTrackFromClip}
+            onRemovePip={removePipTrack}
           />
         ))}
       </Box>

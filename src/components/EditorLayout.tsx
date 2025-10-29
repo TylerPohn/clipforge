@@ -8,6 +8,7 @@ import DropZone from './DropZone';
 import VideoPlayer from './VideoPlayer';
 import TimelineRuler from './TimelineRuler';
 import MediaPanel from './MediaPanel';
+import PipControls from './PipControls';
 import CompositeEditorLayout from './CompositeEditorLayout';
 import { useVideoStore } from '../store/videoStore';
 import { useVideoMetadata } from '../hooks/useVideoMetadata';
@@ -88,6 +89,8 @@ function EditorLayout() {
       {/* Main Content Area with Drop Zone */}
       <DropZone>
         <VideoPlayer />
+        {/* PiP Controls - only shows when PiP track is active */}
+        <PipControls />
       </DropZone>
 
       {/* Media Panel - shows all imported clips */}

@@ -12,11 +12,14 @@ declare const window: any;
 
 function VideoPlayer() {
   const videoRef = useRef<HTMLVideoElement>(null);
+  const pipVideoRef = useRef<HTMLVideoElement>(null);
   const [videoSrc, setVideoSrc] = useState<string | null>(null);
+  const [pipVideoSrc, setPipVideoSrc] = useState<string | null>(null);
   const [currentClipId, setCurrentClipId] = useState<string | null>(null);
 
   const {
     clips,
+    pipTrack,
     isPlaying,
     currentTime,
     volume,
@@ -99,6 +102,77 @@ function VideoPlayer() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [videoSrc]);
 
+  // Load PiP video when pipTrack changes
+  useEffect(() => {
+    if (!pipTrack) {
+      setPipVideoSrc(null);
+      return;
+    }
+
+    // Find the original clip to get its blob URL
+    const originalClip = clips.find(c => c.id === pipTrack.clipData.id);
+
+    if (originalClip?.blobUrl) {
+      // Use the pre-loaded blob URL from the original clip
+      setPipVideoSrc(originalClip.blobUrl);
+      console.log('[VideoPlayer] PiP video loaded from clip blob URL:', originalClip.blobUrl);
+    } else {
+      // Fallback: Convert file path to blob URL using Tauri
+      const loadPipVideo = async () => {
+        try {
+          const { convertFileSrc } = window.__TAURI__.tauri;
+          const pipBlobUrl = convertFileSrc(pipTrack.clipData.path);
+          setPipVideoSrc(pipBlobUrl);
+          console.log('[VideoPlayer] PiP video loaded via convertFileSrc:', pipBlobUrl);
+        } catch (error) {
+          console.error('[VideoPlayer] Failed to load PiP video:', error);
+        }
+      };
+
+      loadPipVideo();
+    }
+  }, [pipTrack, clips]);
+
+  // Sync PiP video playback with main video
+  useEffect(() => {
+    const pipVideo = pipVideoRef.current;
+    if (!pipVideo || !pipTrack || !pipVideoSrc) return;
+
+    // Calculate if PiP should be visible at current time (offset is in milliseconds)
+    const pipStartTime = pipTrack.offset / 1000; // Convert to seconds
+    const pipEndTime = pipStartTime + (pipTrack.duration / 1000);
+    const shouldBeVisible = currentTime >= pipStartTime && currentTime < pipEndTime;
+
+    if (!shouldBeVisible) {
+      pipVideo.pause();
+      return;
+    }
+
+    // Calculate time within PiP clip
+    const timeInPip = currentTime - pipStartTime;
+
+    // Only update if difference is significant
+    if (Math.abs(pipVideo.currentTime - timeInPip) > 0.5) {
+      pipVideo.currentTime = Math.max(0, timeInPip);
+    }
+
+    // Sync play/pause state
+    if (isPlaying && pipVideo.paused) {
+      pipVideo.play().catch(err => {
+        console.error('[VideoPlayer] Failed to play PiP video:', err);
+      });
+    } else if (!isPlaying && !pipVideo.paused) {
+      pipVideo.pause();
+    }
+  }, [pipTrack, pipVideoSrc, currentTime, isPlaying]);
+
+  // Set PiP video volume
+  useEffect(() => {
+    const pipVideo = pipVideoRef.current;
+    if (!pipVideo || !pipTrack) return;
+    pipVideo.volume = pipTrack.volume;
+  }, [pipTrack]);
+
   // Log video source changes
   useEffect(() => {
     const clip = getCurrentClip();
@@ -109,9 +183,10 @@ function VideoPlayer() {
       videoDuration,
       isPlaying,
       currentTime,
-      isValidUrl: videoSrc ? videoSrc.startsWith('blob:') : false
+      isValidUrl: videoSrc ? videoSrc.startsWith('blob:') : false,
+      hasPipTrack: !!pipTrack
     });
-  }, [currentClipId, videoSrc, videoDuration, isPlaying, currentTime, getCurrentClip]);
+  }, [currentClipId, videoSrc, videoDuration, isPlaying, currentTime, getCurrentClip, pipTrack]);
 
   // Sync video element with store
   useEffect(() => {
@@ -351,6 +426,56 @@ function VideoPlayer() {
             objectFit: 'contain'
           }}
         />
+
+        {/* PiP Video Overlay */}
+        {pipTrack && pipVideoSrc && (() => {
+          const pipStartTime = pipTrack.offset / 1000;
+          const pipEndTime = pipStartTime + (pipTrack.duration / 1000);
+          const shouldBeVisible = currentTime >= pipStartTime && currentTime < pipEndTime;
+
+          if (!shouldBeVisible) return null;
+
+          // Calculate position based on corner (simplified)
+          // The position values are relative to the parent container
+          const getCornerStyle = () => {
+            const { x, y } = pipTrack.position;
+            const isLeft = x < 100;
+            const isTop = y < 100;
+            const margin = 20;
+
+            if (isTop && isLeft) {
+              return { top: margin, left: margin };
+            } else if (isTop && !isLeft) {
+              return { top: margin, right: margin };
+            } else if (!isTop && isLeft) {
+              return { bottom: 100 + margin, left: margin }; // Add 100 for controls bar
+            } else {
+              return { bottom: 100 + margin, right: margin };
+            }
+          };
+
+          return (
+            <video
+              ref={pipVideoRef}
+              src={pipVideoSrc}
+              onError={(e) => {
+                console.error('[VideoPlayer] PiP video error:', e);
+              }}
+              style={{
+                position: 'absolute',
+                width: '25%', // Default 25% size
+                height: 'auto',
+                maxWidth: '50%',
+                zIndex: 999,
+                border: '2px solid #9c27b0',
+                borderRadius: '8px',
+                boxShadow: '0 4px 12px rgba(0, 0, 0, 0.5)',
+                objectFit: 'contain',
+                ...getCornerStyle()
+              }}
+            />
+          );
+        })()}
 
         {/* Play/Pause Overlay (shows when paused) */}
         {!isPlaying && (

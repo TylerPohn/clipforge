@@ -13,6 +13,7 @@ function ExportButton({ compositeMode = false }: ExportButtonProps) {
 
   const {
     clips,
+    pipTrack,
     videoPath,
     videoName,
     videoDuration,
@@ -65,6 +66,7 @@ function ExportButton({ compositeMode = false }: ExportButtonProps) {
         compositeMode={compositeMode}
         // Sequential mode props
         clips={clips}
+        pipTrack={pipTrack}
         inputPath={videoPath}
         videoName={videoName}
         videoResolution={videoResolution || undefined}
