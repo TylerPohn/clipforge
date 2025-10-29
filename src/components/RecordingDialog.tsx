@@ -54,7 +54,7 @@ function RecordingDialog({ open, onClose }: RecordingDialogProps) {
   const [isWindows, setIsWindows] = useState(false);
   const [enableMicrophone, setEnableMicrophone] = useState(false);
 
-  const addClip = useVideoStore((state) => state.addClip);
+  const addClipToLibrary = useVideoStore((state) => state.addClipToLibrary);
   const selectedResolution = useVideoStore((state) => state.selectedResolution);
   const setSelectedResolution = useVideoStore((state) => state.setSelectedResolution);
   const setScreenSourceResolution = useVideoStore((state) => state.setScreenSourceResolution);
@@ -225,9 +225,9 @@ function RecordingDialog({ open, onClose }: RecordingDialogProps) {
       if (outputPath) {
         await invoke('move_file', { from: outputPath, to: finalPath });
 
-        // Auto-import the recording
+        // Auto-import the recording to library
         const fileName = finalPath.split('/').pop() || finalPath.split('\\').pop() || 'recording.mp4';
-        addClip(finalPath, fileName);
+        addClipToLibrary(finalPath, fileName);
       }
 
       // Close dialog

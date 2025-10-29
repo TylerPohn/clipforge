@@ -19,6 +19,7 @@ function VideoPlayer() {
 
   const {
     clips,
+    mediaLibrary,
     pipTrack,
     isPlaying,
     currentTime,
@@ -109,8 +110,19 @@ function VideoPlayer() {
       return;
     }
 
-    // Find the original clip to get its blob URL
-    const originalClip = clips.find(c => c.id === pipTrack.clipData.id);
+    // Find the original clip to get its blob URL - check both timeline and library
+    let originalClip = clips.find(c => c.id === pipTrack.clipData.id);
+    if (!originalClip) {
+      originalClip = mediaLibrary.find(c => c.id === pipTrack.clipData.id);
+    }
+
+    // Also try to find by path if ID doesn't match (in case of split clips)
+    if (!originalClip) {
+      originalClip = clips.find(c => c.path === pipTrack.clipData.path);
+    }
+    if (!originalClip) {
+      originalClip = mediaLibrary.find(c => c.path === pipTrack.clipData.path);
+    }
 
     if (originalClip?.blobUrl) {
       // Use the pre-loaded blob URL from the original clip
@@ -131,7 +143,7 @@ function VideoPlayer() {
 
       loadPipVideo();
     }
-  }, [pipTrack, clips]);
+  }, [pipTrack, clips, mediaLibrary]);
 
   // Sync PiP video playback with main video
   useEffect(() => {

@@ -73,9 +73,9 @@ function DropZone({ children }: DropZoneProps) {
                 // Validate extension
                 const ext = fileName.split('.').pop()?.toLowerCase();
                 if (ext === 'mp4' || ext === 'mov') {
-                  // Access store directly instead of through hook
-                  const clipId = useVideoStore.getState().addClip(filePath, fileName);
-                  console.log('[DropZone] Clip added:', { clipId, filePath, fileName });
+                  // Access store directly instead of through hook - add to library, not timeline
+                  const clipId = useVideoStore.getState().addClipToLibrary(filePath, fileName);
+                  console.log('[DropZone] Clip added to library:', { clipId, filePath, fileName });
                 } else {
                   alert('Please drop an MP4 or MOV file');
                 }

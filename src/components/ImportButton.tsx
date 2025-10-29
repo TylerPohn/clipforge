@@ -8,7 +8,7 @@ declare const window: any;
 function ImportButton() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const addClip = useVideoStore((state) => state.addClip);
+  const addClipToLibrary = useVideoStore((state) => state.addClipToLibrary);
 
   const handleImport = async () => {
     console.log('[ImportButton] Import clicked');
@@ -38,11 +38,11 @@ function ImportButton() {
         throw new Error('Please select an MP4 or MOV file');
       }
 
-      // Add clip to store (now supports multiple clips)
-      console.log('[ImportButton] Adding clip to store:', { filePath, fileName });
-      const clipId = addClip(filePath, fileName);
+      // Add clip to library (not timeline)
+      console.log('[ImportButton] Adding clip to library:', { filePath, fileName });
+      const clipId = addClipToLibrary(filePath, fileName);
 
-      console.log('[ImportButton] Clip added successfully:', { clipId, filePath });
+      console.log('[ImportButton] Clip added to library successfully:', { clipId, filePath });
 
     } catch (err: any) {
       console.error('[ImportButton] Import error:', err);

@@ -6,7 +6,10 @@ import { loadVideoBlob } from '../utils/videoLoader';
 declare const window: any;
 
 export function useVideoMetadata() {
+  const mediaLibrary = useVideoStore((state) => state.mediaLibrary);
   const clips = useVideoStore((state) => state.clips);
+  const updateLibraryClipMetadata = useVideoStore((state) => state.updateLibraryClipMetadata);
+  const updateLibraryClipBlobUrl = useVideoStore((state) => state.updateLibraryClipBlobUrl);
   const updateClipMetadata = useVideoStore((state) => state.updateClipMetadata);
   const updateClipBlobUrl = useVideoStore((state) => state.updateClipBlobUrl);
   const addTrack = useVideoStore((state) => state.addTrack);
@@ -15,8 +18,12 @@ export function useVideoMetadata() {
   const fetchedClipIds = useRef<Set<string>>(new Set());
 
   useEffect(() => {
-    // Process each clip that doesn't have complete metadata and blob URL
-    clips.forEach((clip) => {
+    // Process both library clips and timeline clips
+    const allClips = [...mediaLibrary, ...clips];
+
+    allClips.forEach((clip) => {
+      // Determine if this is a library clip or timeline clip
+      const isLibraryClip = mediaLibrary.some(c => c.id === clip.id);
       // Skip if already fetched
       if (fetchedClipIds.current.has(clip.id)) {
         return;
@@ -83,13 +90,18 @@ export function useVideoMetadata() {
               height: videoStream.height
             };
 
-            // Update clip metadata in store
-            updateClipMetadata(clip.id, duration, resolution);
+            // Update clip metadata in store (use correct method based on clip type)
+            if (isLibraryClip) {
+              updateLibraryClipMetadata(clip.id, duration, resolution);
+            } else {
+              updateClipMetadata(clip.id, duration, resolution);
+            }
 
             console.log('[useVideoMetadata] Metadata loaded successfully for clip:', {
               clipId: clip.id,
               duration,
-              resolution
+              resolution,
+              isLibrary: isLibraryClip
             });
           } else {
             console.log('[useVideoMetadata] Clip already has metadata, skipping metadata fetch:', clip.id);
@@ -100,7 +112,11 @@ export function useVideoMetadata() {
             console.log('[useVideoMetadata] Loading blob for clip:', clip.id);
             const blobUrl = await loadVideoBlob(clip.id, clip.path);
             if (blobUrl) {
-              updateClipBlobUrl(clip.id, blobUrl);
+              if (isLibraryClip) {
+                updateLibraryClipBlobUrl(clip.id, blobUrl);
+              } else {
+                updateClipBlobUrl(clip.id, blobUrl);
+              }
               console.log('[useVideoMetadata] Blob loaded successfully for clip:', clip.id);
             } else {
               console.error('[useVideoMetadata] Failed to load blob for clip:', clip.id);
@@ -109,8 +125,8 @@ export function useVideoMetadata() {
             console.log('[useVideoMetadata] Clip already has blob URL:', clip.id);
           }
 
-          // Create a track in the composite state (only if we just loaded metadata)
-          if (duration && resolution && !clip.duration) {
+          // Create a track in the composite state (only if we just loaded metadata and it's a timeline clip)
+          if (duration && resolution && !clip.duration && !isLibraryClip) {
             const clipData: ClipData = {
               id: clip.id,
               path: clip.path,
@@ -133,5 +149,5 @@ export function useVideoMetadata() {
 
       fetchMetadata();
     });
-  }, [clips, updateClipMetadata, updateClipBlobUrl, addTrack]);
+  }, [mediaLibrary, clips, updateLibraryClipMetadata, updateLibraryClipBlobUrl, updateClipMetadata, updateClipBlobUrl, addTrack]);
 }

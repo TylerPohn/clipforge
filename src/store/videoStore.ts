@@ -22,6 +22,9 @@ export interface Clip {
 }
 
 interface VideoState {
+  // Media library (imported clips not yet in timeline)
+  mediaLibrary: Clip[];
+
   // Multi-clip support (sequential playback)
   clips: Clip[];
 
@@ -50,14 +53,22 @@ interface VideoState {
   screenSourceResolution?: { width: number; height: number };
   cameraSourceResolution?: { width: number; height: number };
 
-  // Multi-clip methods (sequential)
-  addClip: (path: string, name: string) => string; // Returns clip ID
+  // Media library methods
+  addClipToLibrary: (path: string, name: string) => string; // Add imported clip to library (not timeline)
+  removeClipFromLibrary: (clipId: string) => void;
+  updateLibraryClipMetadata: (clipId: string, duration: number, resolution: { width: number; height: number }) => void;
+  updateLibraryClipBlobUrl: (clipId: string, blobUrl: string) => void;
+
+  // Multi-clip methods (sequential timeline)
+  addClip: (path: string, name: string) => string; // Returns clip ID (legacy - kept for compatibility)
+  addClipToTimeline: (clipId: string, position?: 'start' | 'end') => void; // Add clip from library to timeline
   updateClipMetadata: (clipId: string, duration: number, resolution: { width: number; height: number }) => void;
   updateClipBlobUrl: (clipId: string, blobUrl: string) => void;
   updateClipTrim: (clipId: string, trimStart: number, trimEnd: number) => void;
   resetClipTrim: (clipId: string) => void;
   removeClip: (clipId: string) => void;
   reorderClip: (clipId: string, newIndex: number) => void;
+  insertClipAtTime: (clipId: string, dropTime: number) => void; // For drag-and-drop to timeline
   splitClipAtTime: (clipId: string, splitTime: number) => void;
   clearAllClips: () => void;
   getCurrentClip: () => Clip | null;
@@ -82,7 +93,7 @@ interface VideoState {
   toggleSoloTrack: (trackId: string) => void;
 
   // PiP Track Management (for sequential view)
-  setPipTrackFromClip: (clipId: string) => void;
+  setPipTrackFromClip: (clipId: string, offset?: number) => void;
   updatePipTrackProperty: <K extends keyof Track>(property: K, value: Track[K]) => void;
   updatePipTrackPosition: (corner: 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right') => void;
   updatePipTrackSize: (sizePercent: number) => void;
@@ -129,6 +140,7 @@ const recalculateStartTimes = (clips: Clip[]): Clip[] => {
 
 export const useVideoStore = create<VideoState>((set, get) => ({
   // Initial state
+  mediaLibrary: [],
   clips: [],
   composite: {
     tracks: [],
@@ -149,6 +161,115 @@ export const useVideoStore = create<VideoState>((set, get) => ({
   selectedResolution: VideoResolution['720P'],
   screenSourceResolution: undefined,
   cameraSourceResolution: undefined,
+
+  // Media library methods
+  addClipToLibrary: (path, name) => {
+    const clipId = `clip-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+
+    const newClip: Clip = {
+      id: clipId,
+      path,
+      name,
+      duration: null,
+      resolution: null,
+      trimStart: 0,
+      trimEnd: 0,
+      startTimeInSequence: 0, // Not relevant for library clips
+      blobUrl: null
+    };
+
+    console.log('[VideoStore] Adding clip to library:', { clipId, path, name });
+
+    set((state) => ({
+      mediaLibrary: [...state.mediaLibrary, newClip]
+    }));
+
+    return clipId;
+  },
+
+  removeClipFromLibrary: (clipId) => {
+    const state = get();
+    const libraryClip = state.mediaLibrary.find(c => c.id === clipId);
+
+    if (!libraryClip) {
+      console.error('[VideoStore] Library clip not found:', clipId);
+      return;
+    }
+
+    const clipPath = libraryClip.path;
+    console.log('[VideoStore] Removing clip from library and all timeline instances:', { clipId, path: clipPath });
+
+    // Remove from library
+    const updatedLibrary = state.mediaLibrary.filter(c => c.id !== clipId);
+
+    // Remove all timeline clips with the same path
+    const updatedClips = state.clips.filter(c => c.path !== clipPath);
+
+    // Recalculate start times if timeline changed
+    const recalculatedClips = updatedClips.length !== state.clips.length
+      ? recalculateStartTimes(updatedClips)
+      : updatedClips;
+
+    const totalDuration = calculateTotalDuration(recalculatedClips);
+
+    // Remove PiP track if it's using the same path
+    const updatedPipTrack = state.pipTrack?.clipData.path === clipPath ? null : state.pipTrack;
+
+    console.log('[VideoStore] Removed clip:', {
+      libraryClipsRemoved: 1,
+      timelineClipsRemoved: state.clips.length - updatedClips.length,
+      pipTrackRemoved: updatedPipTrack !== state.pipTrack
+    });
+
+    set({
+      mediaLibrary: updatedLibrary,
+      clips: recalculatedClips,
+      videoDuration: totalDuration,
+      pipTrack: updatedPipTrack
+    });
+  },
+
+  updateLibraryClipMetadata: (clipId, duration, resolution) => {
+    const state = get();
+    const clipIndex = state.mediaLibrary.findIndex(c => c.id === clipId);
+
+    if (clipIndex === -1) {
+      console.error('[VideoStore] Library clip not found:', clipId);
+      return;
+    }
+
+    const updatedLibrary = [...state.mediaLibrary];
+    updatedLibrary[clipIndex] = {
+      ...updatedLibrary[clipIndex],
+      duration,
+      resolution,
+      trimEnd: duration // Set trim end to full duration initially
+    };
+
+    console.log('[VideoStore] Updating library clip metadata:', { clipId, duration, resolution });
+
+    set({ mediaLibrary: updatedLibrary });
+  },
+
+  updateLibraryClipBlobUrl: (clipId, blobUrl) => {
+    const state = get();
+    const clipIndex = state.mediaLibrary.findIndex(c => c.id === clipId);
+
+    if (clipIndex === -1) {
+      console.error('[VideoStore] Library clip not found:', clipId);
+      return;
+    }
+
+    const updatedLibrary = [...state.mediaLibrary];
+    updatedLibrary[clipIndex] = {
+      ...updatedLibrary[clipIndex],
+      blobUrl
+    };
+
+    console.log('[VideoStore] Updating library clip blob URL:', { clipId, blobUrl });
+
+    set({ mediaLibrary: updatedLibrary });
+  },
 
   // Multi-clip methods
   addClip: (path, name) => {
@@ -351,7 +472,136 @@ export const useVideoStore = create<VideoState>((set, get) => ({
     const recalculatedClips = recalculateStartTimes(updatedClips);
     const totalDuration = calculateTotalDuration(recalculatedClips);
 
+    // Find which clip the current playhead position falls into after reordering
+    let newCurrentTime = state.currentTime;
+    let foundValidClip = false;
+
+    for (const clip of recalculatedClips) {
+      if (!clip.duration) continue;
+      const trimmedDuration = clip.trimEnd - clip.trimStart;
+      const clipEndTime = clip.startTimeInSequence + trimmedDuration;
+
+      // Check if current time is within this clip's bounds
+      if (state.currentTime >= clip.startTimeInSequence && state.currentTime < clipEndTime) {
+        // Current time is still valid, keep it
+        foundValidClip = true;
+        break;
+      }
+    }
+
+    // If current time is no longer within any clip, reset to start
+    if (!foundValidClip) {
+      console.log('[VideoStore] Playhead position invalid after reorder, resetting to 0');
+      newCurrentTime = 0;
+    }
+
     console.log('[VideoStore] Reordering clip:', { clipId, oldIndex, newIndex });
+    console.log('[VideoStore] New clip order:', recalculatedClips.map(c => ({
+      id: c.id,
+      name: c.name,
+      startTime: c.startTimeInSequence,
+      duration: c.duration ? (c.trimEnd - c.trimStart) : 0
+    })));
+
+    set({
+      clips: recalculatedClips,
+      videoDuration: totalDuration,
+      currentTime: newCurrentTime
+    });
+  },
+
+  addClipToTimeline: (clipId, position = 'end') => {
+    const state = get();
+    // Find clip in media library
+    const libraryClip = state.mediaLibrary.find(c => c.id === clipId);
+
+    if (!libraryClip) {
+      console.error('[VideoStore] Clip not found in library:', clipId);
+      return;
+    }
+
+    // Create a copy with new ID for timeline
+    const timestamp = Date.now();
+    const randomSuffix = Math.random().toString(36).substr(2, 9);
+    const newClipId = `clip-${timestamp}-${randomSuffix}`;
+
+    const newClip: Clip = {
+      ...libraryClip,
+      id: newClipId,
+      startTimeInSequence: 0 // Will be recalculated
+    };
+
+    // Add to beginning or end of timeline
+    const updatedClips = position === 'start'
+      ? [newClip, ...state.clips]
+      : [...state.clips, newClip];
+
+    // Recalculate start times
+    const recalculatedClips = recalculateStartTimes(updatedClips);
+    const totalDuration = calculateTotalDuration(recalculatedClips);
+
+    console.log('[VideoStore] Adding clip to timeline:', {
+      clipId,
+      newClipId,
+      position,
+      totalClips: recalculatedClips.length
+    });
+
+    set({
+      clips: recalculatedClips,
+      videoDuration: totalDuration,
+      videoPath: libraryClip.path,
+      videoName: libraryClip.name,
+      videoResolution: libraryClip.resolution
+    });
+  },
+
+  insertClipAtTime: (clipId, dropTime) => {
+    const state = get();
+    // Check both timeline and library
+    let clip = state.clips.find(c => c.id === clipId);
+    if (!clip) {
+      clip = state.mediaLibrary.find(c => c.id === clipId);
+    }
+
+    if (!clip) {
+      console.error('[VideoStore] Clip not found:', clipId);
+      return;
+    }
+
+    // Create a copy of the clip with a new ID
+    const timestamp = Date.now();
+    const randomSuffix = Math.random().toString(36).substr(2, 9);
+    const newClipId = `clip-${timestamp}-${randomSuffix}`;
+
+    const newClip: Clip = {
+      ...clip,
+      id: newClipId,
+      startTimeInSequence: 0 // Will be recalculated
+    };
+
+    // Find insertion index based on drop time
+    let insertIndex = 0;
+    for (let i = 0; i < state.clips.length; i++) {
+      if (state.clips[i].startTimeInSequence > dropTime) {
+        insertIndex = i;
+        break;
+      }
+      // If drop time is after all clips, insert at end
+      if (i === state.clips.length - 1) {
+        insertIndex = state.clips.length;
+      }
+    }
+
+    // Insert the clip at the calculated index
+    const updatedClips = [...state.clips];
+    updatedClips.splice(insertIndex, 0, newClip);
+
+    // Recalculate start times since we inserted a clip
+    const recalculatedClips = recalculateStartTimes(updatedClips);
+    const totalDuration = calculateTotalDuration(recalculatedClips);
+
+    console.log('[VideoStore] Inserting clip at time:', { clipId, newClipId, dropTime, insertIndex });
     console.log('[VideoStore] New clip order:', recalculatedClips.map(c => ({
       id: c.id,
       name: c.name,
@@ -435,7 +685,7 @@ export const useVideoStore = create<VideoState>((set, get) => ({
         clip2Duration: clip2.trimEnd - clip2.trimStart
       });
 
-      // Replace the original clip with two new clips
+      // Replace the original clip with two new clips in timeline
       const updatedClips = [...state.clips];
       updatedClips.splice(clipIndex, 1, clip1, clip2);
 
@@ -443,8 +693,47 @@ export const useVideoStore = create<VideoState>((set, get) => ({
       const recalculatedClips = recalculateStartTimes(updatedClips);
       const totalDuration = calculateTotalDuration(recalculatedClips);
 
+      // Also update media library - find the library clip by path and replace with two split clips
+      const libraryClipIndex = state.mediaLibrary.findIndex(c => c.path === clip.path);
+      let updatedLibrary = state.mediaLibrary;
+
+      if (libraryClipIndex !== -1) {
+        const libraryClip = state.mediaLibrary[libraryClipIndex];
+
+        // Create library versions (same as timeline clips but with their own IDs for library)
+        const timestamp2 = Date.now() + 1;
+        const randomSuffix2 = Math.random().toString(36).substr(2, 9);
+        const libClipId1 = `clip-${timestamp2}-${randomSuffix2}-1`;
+        const libClipId2 = `clip-${timestamp2}-${randomSuffix2}-2`;
+
+        const libClip1: Clip = {
+          ...libraryClip,
+          id: libClipId1,
+          name: `${libraryClip.name}-1`,
+          trimEnd: splitPointInOriginal,
+          startTimeInSequence: 0
+        };
+
+        const libClip2: Clip = {
+          ...libraryClip,
+          id: libClipId2,
+          name: `${libraryClip.name}-2`,
+          trimStart: splitPointInOriginal,
+          startTimeInSequence: 0
+        };
+
+        updatedLibrary = [...state.mediaLibrary];
+        updatedLibrary.splice(libraryClipIndex, 1, libClip1, libClip2);
+
+        console.log('[VideoStore] Also split media library clip:', {
+          originalLibClipId: libraryClip.id,
+          newLibClipIds: [libClipId1, libClipId2]
+        });
+      }
+
       set({
         clips: recalculatedClips,
+        mediaLibrary: updatedLibrary,
         videoDuration: totalDuration,
         currentTime: splitTime, // Keep playhead at split point
         isSplitting: false
@@ -817,12 +1106,16 @@ export const useVideoStore = create<VideoState>((set, get) => ({
   },
 
   // PiP Track Management Methods
-  setPipTrackFromClip: (clipId: string) => {
+  setPipTrackFromClip: (clipId: string, offset?: number) => {
     const state = get();
-    const clip = state.clips.find(c => c.id === clipId);
+    // Check both timeline clips and library clips
+    let clip = state.clips.find(c => c.id === clipId);
+    if (!clip) {
+      clip = state.mediaLibrary.find(c => c.id === clipId);
+    }
 
     if (!clip) {
-      console.error('[VideoStore] Clip not found:', clipId);
+      console.error('[VideoStore] Clip not found in timeline or library:', clipId);
       return;
     }
 
@@ -844,6 +1137,9 @@ export const useVideoStore = create<VideoState>((set, get) => ({
       y: canvasHeight - pipHeight - margin
     };
 
+    // Use provided offset or default to 0
+    const pipOffset = offset !== undefined ? offset * 1000 : 0; // Convert seconds to milliseconds
+
     // Convert Clip to Track for PiP
     const pipTrack: Track = {
       id: `pip-${Date.now()}`,
@@ -861,13 +1157,13 @@ export const useVideoStore = create<VideoState>((set, get) => ({
       opacity: 1,
       zIndex: 999, // High z-index to ensure it's on top
       isVisible: true,
-      offset: 0, // Start at beginning of timeline
+      offset: pipOffset, // Use provided offset or 0
       duration: clip.duration * 1000, // Convert to milliseconds
       createdAt: new Date(),
       sourceFile: clip.path,
     };
 
-    console.log('[VideoStore] Setting PiP track from clip:', clipId, 'position:', defaultPosition);
+    console.log('[VideoStore] Setting PiP track from clip:', clipId, 'position:', defaultPosition, 'offset:', pipOffset);
 
     set({ pipTrack });
   },

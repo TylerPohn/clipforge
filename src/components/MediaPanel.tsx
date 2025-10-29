@@ -1,7 +1,8 @@
 import { Box, Typography, Paper, IconButton, Stack, Chip } from '@mui/material';
-import { Delete, ArrowBack, ArrowForward, RestartAlt, PictureInPictureAlt } from '@mui/icons-material';
+import { Delete, ArrowBack, ArrowForward, RestartAlt, PictureInPictureAlt, AddCircleOutline } from '@mui/icons-material';
 import { useVideoStore, Clip } from '../store/videoStore';
 import { useVideoThumbnail } from '../hooks/useVideoThumbnail';
+import { useRef, useState } from 'react';
 
 interface ClipCardProps {
   clip: Clip;
@@ -14,13 +15,18 @@ interface ClipCardProps {
   onReset: (id: string) => void;
   onSetPip: (clipId: string) => void;
   onRemovePip: () => void;
+  onAddToTimeline: (clipId: string) => void;
+  isLibraryClip: boolean; // True if clip is in library (not timeline)
 }
 
-function ClipCard({ clip, index, totalClips, isActive, isPipTrack, onRemove, onReorder, onReset, onSetPip, onRemovePip }: ClipCardProps) {
+function ClipCard({ clip, index, totalClips, isActive, isPipTrack, onRemove, onReorder, onReset, onSetPip, onRemovePip, onAddToTimeline, isLibraryClip }: ClipCardProps) {
   console.log('[MediaPanel] ClipCard rendering for clip:', { id: clip.id, name: clip.name, path: clip.path, hasPath: !!clip.path });
   // Use trimStart as the thumbnail seek time so split clips get unique thumbnails
   const thumbnailUrl = useVideoThumbnail(clip.path, clip.trimStart);
   console.log('[MediaPanel] Thumbnail URL for clip', clip.name, ':', thumbnailUrl ? 'Generated' : 'null', 'seekTime:', clip.trimStart);
+
+  const [isDragging, setIsDragging] = useState(false);
+  const thumbnailRef = useRef<HTMLImageElement>(null);
 
   const formatDuration = (seconds: number | null) => {
     if (seconds === null) return 'Loading...';
@@ -61,8 +67,77 @@ function ClipCard({ clip, index, totalClips, isActive, isPipTrack, onRemove, onR
     }
   };
 
+  const handleAddToTimeline = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    onAddToTimeline(clip.id);
+  };
+
+  // Drag handlers for timeline drag-and-drop
+  const handleDragStart = (e: React.DragEvent) => {
+    console.log('[ClipCard] Drag started for clip:', clip.id);
+    setIsDragging(true);
+
+    // Set the clip data in the drag event
+    e.dataTransfer.effectAllowed = 'copy'; // Clips stay in Media panel
+    e.dataTransfer.setData('application/json', JSON.stringify({
+      clipId: clip.id,
+      clipData: clip
+    }));
+
+    // Create custom drag image from thumbnail if available
+    if (thumbnailRef.current) {
+      const dragPreview = document.createElement('div');
+      dragPreview.style.position = 'absolute';
+      dragPreview.style.top = '-1000px';
+      dragPreview.style.width = '160px';
+      dragPreview.style.padding = '8px';
+      dragPreview.style.backgroundColor = 'rgba(30, 30, 30, 0.95)';
+      dragPreview.style.borderRadius = '8px';
+      dragPreview.style.border = '2px solid #00bcd4';
+      dragPreview.style.boxShadow = '0 4px 12px rgba(0,0,0,0.5)';
+
+      // Add thumbnail
+      const img = document.createElement('img');
+      img.src = thumbnailUrl || '';
+      img.style.width = '100%';
+      img.style.height = '90px';
+      img.style.objectFit = 'cover';
+      img.style.borderRadius = '4px';
+      img.style.marginBottom = '4px';
+      dragPreview.appendChild(img);
+
+      // Add clip name
+      const name = document.createElement('div');
+      name.textContent = clip.name;
+      name.style.color = 'white';
+      name.style.fontSize = '11px';
+      name.style.fontWeight = 'bold';
+      name.style.textAlign = 'center';
+      name.style.overflow = 'hidden';
+      name.style.textOverflow = 'ellipsis';
+      name.style.whiteSpace = 'nowrap';
+      dragPreview.appendChild(name);
+
+      document.body.appendChild(dragPreview);
+      e.dataTransfer.setDragImage(dragPreview, 80, 60);
+
+      // Clean up the preview element after drag starts
+      setTimeout(() => {
+        document.body.removeChild(dragPreview);
+      }, 0);
+    }
+  };
+
+  const handleDragEnd = () => {
+    console.log('[ClipCard] Drag ended for clip:', clip.id);
+    setIsDragging(false);
+  };
+
   return (
     <Paper
+      draggable
+      onDragStart={handleDragStart}
+      onDragEnd={handleDragEnd}
       elevation={isActive ? 8 : 2}
       sx={{
         minWidth: 160,
@@ -71,6 +146,8 @@ function ClipCard({ clip, index, totalClips, isActive, isPipTrack, onRemove, onR
         position: 'relative',
         transition: 'all 0.2s',
         border: isPipTrack ? '2px solid #9c27b0' : isActive ? '2px solid #00bcd4' : '2px solid transparent',
+        opacity: isDragging ? 0.5 : 1,
+        cursor: isDragging ? 'grabbing' : 'grab',
         '&:hover': {
           elevation: 4,
           borderColor: isPipTrack ? '#9c27b0' : isActive ? '#00bcd4' : 'rgba(255, 255, 255, 0.2)',
@@ -175,6 +252,7 @@ function ClipCard({ clip, index, totalClips, isActive, isPipTrack, onRemove, onR
           <>
             <Box
               component="img"
+              ref={thumbnailRef}
               src={thumbnailUrl}
               alt={clip.name}
               sx={{
@@ -229,6 +307,22 @@ function ClipCard({ clip, index, totalClips, isActive, isPipTrack, onRemove, onR
             {clip.name}
           </Typography>
           <Stack direction="row" spacing={0.25}>
+            {/* Add to Timeline button - only show for library clips */}
+            {isLibraryClip && (
+              <IconButton
+                size="small"
+                onClick={handleAddToTimeline}
+                title="Add to main timeline"
+                sx={{
+                  p: 0.25,
+                  opacity: 0.8,
+                  color: 'primary.main',
+                  '&:hover': { opacity: 1, backgroundColor: 'rgba(0, 188, 212, 0.1)' }
+                }}
+              >
+                <AddCircleOutline fontSize="small" />
+              </IconButton>
+            )}
             {/* PiP button */}
             <IconButton
               size="small"
@@ -285,18 +379,18 @@ function ClipCard({ clip, index, totalClips, isActive, isPipTrack, onRemove, onR
 }
 
 function MediaPanel() {
-  const clips = useVideoStore((state) => state.clips);
+  const mediaLibrary = useVideoStore((state) => state.mediaLibrary);
   const pipTrack = useVideoStore((state) => state.pipTrack);
-  const removeClip = useVideoStore((state) => state.removeClip);
-  const reorderClip = useVideoStore((state) => state.reorderClip);
-  const resetClipTrim = useVideoStore((state) => state.resetClipTrim);
-  const getCurrentClip = useVideoStore((state) => state.getCurrentClip);
+  const removeClipFromLibrary = useVideoStore((state) => state.removeClipFromLibrary);
   const setPipTrackFromClip = useVideoStore((state) => state.setPipTrackFromClip);
   const removePipTrack = useVideoStore((state) => state.removePipTrack);
+  const addClipToTimeline = useVideoStore((state) => state.addClipToTimeline);
 
-  const currentClip = getCurrentClip();
+  // Dummy handlers for library clips (not applicable)
+  const handleReorder = () => {}; // Library clips don't have order
+  const handleReset = () => {}; // Library clips aren't trimmed
 
-  if (clips.length === 0) {
+  if (mediaLibrary.length === 0) {
     return null;
   }
 
@@ -312,7 +406,7 @@ function MediaPanel() {
     }}>
       {/* Header */}
       <Typography variant="subtitle2" color="text.secondary" sx={{ mb: 1.5 }}>
-        Media ({clips.length} {clips.length === 1 ? 'clip' : 'clips'})
+        Media ({mediaLibrary.length} {mediaLibrary.length === 1 ? 'clip' : 'clips'})
       </Typography>
 
       {/* Clips List */}
@@ -337,19 +431,21 @@ function MediaPanel() {
           },
         },
       }}>
-        {clips.map((clip, index) => (
+        {mediaLibrary.map((clip, index) => (
           <ClipCard
             key={clip.id}
             clip={clip}
             index={index}
-            totalClips={clips.length}
-            isActive={currentClip?.id === clip.id}
+            totalClips={mediaLibrary.length}
+            isActive={false} // Library clips aren't active
             isPipTrack={pipTrack?.clipData.id === clip.id}
-            onRemove={removeClip}
-            onReorder={reorderClip}
-            onReset={resetClipTrim}
+            onRemove={removeClipFromLibrary}
+            onReorder={handleReorder}
+            onReset={handleReset}
             onSetPip={setPipTrackFromClip}
             onRemovePip={removePipTrack}
+            onAddToTimeline={addClipToTimeline}
+            isLibraryClip={true}
           />
         ))}
       </Box>
