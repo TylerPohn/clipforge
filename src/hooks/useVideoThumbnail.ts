@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 
 declare const window: any;
 
@@ -10,6 +10,8 @@ declare const window: any;
  */
 export function useVideoThumbnail(videoPath: string | null, seekTime?: number): string | null {
   const [thumbnailUrl, setThumbnailUrl] = useState<string | null>(null);
+  const abortControllerRef = useRef<AbortController | null>(null);
+  const generationInProgressRef = useRef<boolean>(false);
 
   useEffect(() => {
     console.log('[useVideoThumbnail] Hook called with videoPath:', videoPath, 'seekTime:', seekTime);
@@ -20,8 +22,17 @@ export function useVideoThumbnail(videoPath: string | null, seekTime?: number): 
       return;
     }
 
+    // If a generation is already in progress, abort it
+    if (abortControllerRef.current) {
+      console.log('[useVideoThumbnail] Aborting previous thumbnail generation');
+      abortControllerRef.current.abort();
+    }
+
+    // Create new abort controller for this generation
+    const abortController = new AbortController();
+    abortControllerRef.current = abortController;
+
     console.log('[useVideoThumbnail] Starting thumbnail generation for:', videoPath, 'at time:', seekTime);
-    let isMounted = true;
     let videoElement: HTMLVideoElement | null = null;
     let blobUrl: string | null = null;
 
@@ -184,12 +195,17 @@ export function useVideoThumbnail(videoPath: string | null, seekTime?: number): 
 
         console.log('[useVideoThumbnail] Successfully generated thumbnail for:', videoPath, 'Data URL length:', dataUrl.length);
 
-        if (isMounted) {
+        // Check if this operation was aborted before updating state
+        if (!abortController.signal.aborted) {
+          console.log('[useVideoThumbnail] Setting thumbnail URL in state');
           setThumbnailUrl(dataUrl);
+        } else {
+          console.log('[useVideoThumbnail] Operation was aborted, not setting thumbnail URL');
         }
       } catch (error) {
-        console.error('[useVideoThumbnail] Failed to generate thumbnail:', error);
-        if (isMounted) {
+        // Only log error if not aborted
+        if (!abortController.signal.aborted) {
+          console.error('[useVideoThumbnail] Failed to generate thumbnail:', error);
           setThumbnailUrl(null);
         }
       } finally {
@@ -204,10 +220,14 @@ export function useVideoThumbnail(videoPath: string | null, seekTime?: number): 
       }
     };
 
-    generateThumbnail();
+    generationInProgressRef.current = true;
+    generateThumbnail().finally(() => {
+      generationInProgressRef.current = false;
+    });
 
     return () => {
-      isMounted = false;
+      console.log('[useVideoThumbnail] Cleanup: aborting thumbnail generation');
+      abortController.abort();
       if (videoElement) {
         videoElement.src = '';
         videoElement.load();

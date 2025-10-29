@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useEffect } from 'react';
 import { Box, Typography, Paper } from '@mui/material';
 import { CloudUpload } from '@mui/icons-material';
 import { useVideoStore } from '../store/videoStore';
@@ -10,7 +10,6 @@ interface DropZoneProps {
 
 // Global flag to prevent duplicate listener setup
 let globalListenerSetup = false;
-let _globalUnlisten: (() => void) | null = null;
 
 // Track recently processed files to prevent duplicates
 const recentlyProcessed = new Map<string, number>();
@@ -35,7 +34,7 @@ function DropZone({ children }: DropZoneProps) {
         const currentWindow = getCurrentWindow();
 
         // Listen for file drop events
-        _globalUnlisten = await currentWindow.onDragDropEvent((event: any) => {
+        await currentWindow.onDragDropEvent((event: any) => {
           console.log('[DropZone] Drag drop event:', event);
 
           if (event.payload.type === 'over') {
